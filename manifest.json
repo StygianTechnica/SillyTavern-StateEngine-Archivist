@@ -1,0 +1,13 @@
+{
+    "name": "SillyTavern-StateEngine-ExtensionTemplate",
+    "display_name": "State Engine Extension Template",
+    "description": "Blank scaffold for a SillyTavern extension that integrates with the State Engine API. Contains no business logic by design - clone it, rename the namespace, and start building on top of it.",
+    "version": "0.1.0",
+    "js": "src/index.js",
+    "loading_order": 100,
+    "requires": [],
+    "optional": [],
+    "author": "",
+    "homePage": "https://github.com/StygianTechnica/SillyTavern-StateEngine-ExtensionTemplate",
+    "auto_update": false
+}

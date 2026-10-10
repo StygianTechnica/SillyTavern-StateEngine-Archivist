@@ -1,0 +1,8 @@
+{
+    "name": "sillytavern-state-engine-extension-template",
+    "version": "0.1.0",
+    "private": true,
+    "type": "module",
+    "description": "Blank template for building a SillyTavern extension that integrates with the State Engine API.",
+    "license": "SEE LICENSE IN LICENSE"
+}
