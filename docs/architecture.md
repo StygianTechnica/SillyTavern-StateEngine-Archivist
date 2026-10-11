@@ -1,13 +1,13 @@
 # Architecture
 
-This template is deliberately thin: four files under `src/api/` - three
-that each wrap exactly one State Engine API call, plus one that checks
-the dependency is actually there before any of them run - one
-`src/extension.js` that ties them together in the right order, and one
-`src/index.js` that starts it all when SillyTavern loads the page. This
-document explains what those calls actually do and why they're needed,
-so extending the template is a decision about *your* extension's
-design, not a guessing game about the scaffold's.
+Archivist starts from the State Engine extension template's scaffold:
+files under `src/api/` that each wrap exactly one State Engine API call,
+plus one that checks the dependency is actually there before any of them
+run; `src/extension.js`, which ties them together in the right order;
+`src/constants.js`, which holds Archivist's identity (`EXTENSION_ID`,
+`NAMESPACE`); and `src/index.js`, which starts it all when SillyTavern
+loads the page. This document explains what those calls do and why
+they're needed.
 
 ## Reaching the State Engine API
 
@@ -16,14 +16,14 @@ The State Engine extension does not expose a global like
 (`window.StateEngineWI`). The only way to reach `stateEngine.*` today is
 an ES module import of its `src/api/index.js` (and, for the identity
 helper `ensureInstanceId()`, its `src/api/identity.js` directly - that
-one function is deliberately not part of the `stateEngine` object). This
-template imports both with a relative path that assumes the State
+one function is deliberately not part of the `stateEngine` object).
+Archivist imports both with a relative path that assumes the State
 Engine extension is installed as a SIBLING folder to this one:
 
 ```
 public/scripts/extensions/third-party/
-  SillyTavern-StateEngine/                    <- the State Engine extension
-  SillyTavern-StateEngine-ExtensionTemplate/  <- this one (or your renamed clone)
+  SillyTavern-StateEngine/            <- the State Engine extension
+  SillyTavern-StateEngine-Archivist/  <- this one
 ```
 
 If your install has the State Engine extension under a different folder
@@ -31,7 +31,7 @@ name, update the two `const ..._PATH` lines repeated at the top of
 `src/api/namespace.js`, `registration.js`, and `capabilities.js` (they
 each import the same two things, from the same relative path,
 independently - see "Why the path is repeated three times", below) -
-there's nowhere else in the template this assumption is baked in.
+there's nowhere else in Archivist this assumption is baked in.
 
 Each of those three files imports its two paths with a DYNAMIC
 `import()` INSIDE its exported function, not a static `import ... from`
@@ -80,7 +80,7 @@ structural change - it wouldn't alter any behavior described here.
    - `registerWithStateEngine()` - see "Registration", below.
    - `declareCapabilities()` - see "Capabilities", below.
 5. **Every later page load repeats steps 3-4.** There is no "first run
-   only" special case anywhere in this template - `createNamespace()` is
+   only" special case anywhere in Archivist - `createNamespace()` is
    idempotent for the same extension re-claiming the same namespace, and
    `registerExtension()`/`declareCapabilities()` simply replace the
    previous declaration with an identical one. Your extension's own
@@ -96,7 +96,7 @@ extension's code just stops running when the page unloads.
 
 ## Dependency checking
 
-Every extension built from this template automatically verifies that
+Archivist automatically verifies that
 the State Engine extension is actually present before doing anything
 else - `src/api/dependency-check.js`, called first thing inside
 `initExtension()`. Three failure modes are treated as one: not
@@ -140,8 +140,8 @@ confirmed present.
 ## Namespaces
 
 A namespace is the prefix every variable and preset your extension
-creates through the State Engine carries - `myExtension__mood`, not
-`mood`. It exists so two different extensions (or the same extension
+creates through the State Engine carries - `archivist__memories`, not
+`memories`. It exists so two different extensions (or the same extension
 loaded twice by mistake) can never collide on a variable name.
 
 - **Claiming** (`stateEngine.createNamespace(extensionId, instanceId,
@@ -180,12 +180,12 @@ claims to provide, via `stateEngine.getRegisteredExtensions()` or
 `getExtensionRegistration(extensionId)`. It creates nothing: no preset,
 no variable, no capability graph edge. Registering is *optional* in the
 sense that nothing breaks if you skip it, but it's what makes your
-extension discoverable, so this template does it unconditionally.
+extension discoverable, so Archivist does it unconditionally.
 
 A call to `registerExtension()` REPLACES any previous registration for
 your `extensionId` - it does not merge field-by-field with what you
 registered on an earlier load. If you later add real variables, list
-their fully-qualified names (`myExtension__mood`, not `mood`) in
+their fully-qualified names (`archivist__memories`, not `memories`) in
 `metadata.variables` so other extensions can see what you expose.
 
 ## Capabilities
