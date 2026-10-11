@@ -11,7 +11,13 @@
 //                       from the memory browser (src/ui/memory-browser.js) -
 //                       the only way a stored memory is ever removed.
 // - moveChatMemories()  follows a renamed chat (src/memory/chat-lifecycle.js).
+// - applyMessageSync()  keeps the open chat's memories matched to its
+//                       messages as they change - regenerated, swiped,
+//                       edited, deleted (src/memory/message-sync.js).
 //
+// HIDDEN memories: those from a swipe that isn't the one shown. They stay
+// stored (swiping back shows them again) but are left out of the indexes
+// and of everything the query APIs return for the open chat.
 // Indexes exist only for the open chat. getMemoriesForEntity() and
 // getMemoriesBySubtype() therefore answer for the open chat, synchronously;
 // getAllMemories() can read any chat, so it is async.
@@ -36,7 +42,9 @@ const EMPTY_INDEXES = Object.freeze({ memoryByEntity: Object.create(null), memor
 const state = {
     ref: null,        // the open chat (getCurrentChatRef()), or null
     chatKey: null,
-    records: [],
+    all: [],          // the open chat's valid records, hidden ones included
+    records: [],      // ...without the hidden ones - what the APIs answer from
+    hidden: new Set(), // ids of the hidden records (see above)
     indexes: EMPTY_INDEXES,
     loadToken: 0,     // guards against an older load finishing after a newer one
     loading: Promise.resolve(), // the latest loadCurrentChat() in progress
@@ -45,7 +53,8 @@ const state = {
 const copy = (records) => records.map((record) => structuredClone(record));
 
 function setRecords(records) {
-    state.records = records.filter(isMemoryRecord);
+    state.all = records.filter(isMemoryRecord);
+    state.records = state.all.filter((record) => !state.hidden.has(record.id));
     state.indexes = buildIndexes(state.records);
 }
 
@@ -71,6 +80,7 @@ async function loadOpenChat() {
     const chatKey = ref ? chatKeyFor(ref) : null;
     state.ref = ref;
     state.chatKey = chatKey;
+    state.hidden = new Set();
     setRecords([]);
 
     const entry = chatKey ? getChatEntry(chatKey) : null;
@@ -193,5 +203,56 @@ export async function moveChatMemories(oldKey, newRef) {
     moveChatEntry(oldKey, newKey, { chatId: newRef.chatId, displayName: newRef.displayName || entry.displayName });
     if (state.chatKey === newKey || state.chatKey === oldKey) await loadCurrentChat();
     emitChanged(newKey, newRef.chatId);
+    return true;
+}
+
+// Resolves once the open chat's memory has finished loading.
+export function whenOpenChatLoaded() {
+    return state.loading;
+}
+
+// The open chat's key and ALL its records (hidden ones included), as
+// copies - what src/memory/message-sync.js plans from.
+export function getOpenChatRecords() {
+    return { chatKey: state.chatKey, chatId: state.ref?.chatId ?? null, records: copy(state.all) };
+}
+
+// Applies a plan from planMessageSync() (src/memory/message-sync-plan.js)
+// to the open chat `chatKey`: deletes `remove`, rewrites the source of the
+// ones in `repoint`, and hides `hidden` (every other record is shown).
+// Does nothing when `chatKey` is no longer the open chat. Resolves to
+// whether anything changed. Throws if the file could not be written -
+// nothing changes then.
+export async function applyMessageSync(chatKey, { remove = [], repoint = new Map(), hidden = [] } = {}) {
+    if (!chatKey || chatKey !== state.chatKey) return false;
+    const drop = new Set(remove);
+    const entry = getChatEntry(chatKey);
+    let records = state.all;
+    let fileChanged = false;
+
+    if (entry && (drop.size > 0 || repoint.size > 0)) {
+        records = await updateMemoryFile(entry.fileName, (existing) => existing
+            .filter((record) => {
+                if (!drop.has(record?.id)) return true;
+                fileChanged = true;
+                return false;
+            })
+            .map((record) => {
+                if (!repoint.has(record?.id)) return record;
+                fileChanged = true;
+                return { ...record, source_message_id: repoint.get(record.id) };
+            }));
+        if (fileChanged) updateChatEntry(chatKey, { recordCount: records.filter(isMemoryRecord).length, updatedAt: new Date().toISOString() });
+        // The user switched chats while the file was written: the file is
+        // right; there is nothing open to update.
+        if (chatKey !== state.chatKey) return fileChanged;
+    }
+
+    const nextHidden = new Set(hidden.filter((id) => !drop.has(id)));
+    const hiddenChanged = nextHidden.size !== state.hidden.size || [...nextHidden].some((id) => !state.hidden.has(id));
+    if (!fileChanged && !hiddenChanged) return false;
+    state.hidden = nextHidden;
+    setRecords(records);
+    emitChanged(chatKey, state.ref?.chatId ?? entry?.chatId);
     return true;
 }

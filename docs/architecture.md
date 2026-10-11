@@ -21,6 +21,9 @@ src/memory/                   the memory core - no State Engine calls
   indexes.js                  memoryByEntity / memoryBySubtype (spec section 4)
   archivist.js                open chat's records + indexes; add, delete, move; the 3 query APIs
   chat-lifecycle.js           follows renamed chats; keeps deleted chats' memory
+  message-sync-plan.js        matching memories to messages (by send_date)
+  message-sync.js             follows regenerated, swiped, edited, deleted messages
+  message-fingerprints.js     each message's text when last extracted (edits)
   chat-existence.js           which registered chats still exist (for the browser)
 
 src/extraction/               State Engine produces memories; Archivist stores them
@@ -181,6 +184,40 @@ A pass, for the chat open when it starts:
 Progress (`getCatchUpProgress()`, `onCatchUpProgress()`) drives the drawer.
 Cancel stops between chunks. A pass keeps writing to the chat it started on
 if the user switches chats; only one pass runs at a time.
+
+## Memories follow their messages
+
+A memory's `source_message_id` is `<chatId>#<index>@<send_date>`.
+SillyTavern sets `send_date` when a message or a swipe is written (an ISO
+timestamp to the millisecond) and keeps each swipe's in `swipe_info[]`, so
+`send_date` identifies one message and swipe; the index is only where it
+sits now. Nothing is written into the chat.
+
+`src/memory/message-sync.js` re-matches the open chat's memories on
+`MESSAGE_DELETED`, `MESSAGE_SWIPED`, `MESSAGE_SWIPE_DELETED`,
+`MESSAGE_RECEIVED`, `MESSAGE_UPDATED` and `CHAT_CHANGED`
+(`planMessageSync()` in `message-sync-plan.js`):
+
+- its `send_date` is a message's current one -> shown, index corrected if
+  messages before it moved;
+- it is an inactive swipe's -> **hidden**: kept on disk, left out of the
+  indexes and the open chat's API answers (`state.hidden` in the core);
+  swiping back shows it again;
+- it is nowhere -> **removed** (regenerated - SillyTavern deletes the reply
+  first - deleted, or its swipe deleted).
+
+`MESSAGE_EDITED` removes the edited message's memories and, while Archivist
+is enabled, re-extracts that one message through the catch-up preset
+(`reextractMessage()`). SillyTavern reports every confirmed edit, changed or
+not, so a fingerprint of each message's text at extraction
+(`message-fingerprints.js`, this session only) skips edits that changed
+nothing. Changes are applied to the open chat only, one at a time, after its
+memory has loaded; an empty chat array while memories exist is treated as
+"not loaded yet", never as "everything was deleted". A memory with no
+`send_date` to go by (`Chat#unknown`) is left alone.
+
+The catch-up preset's runs - a pass's chunks and an edit's re-extraction -
+go through one queue, as they share the preset's context.
 
 ## Renamed and deleted chats
 

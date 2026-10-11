@@ -18,7 +18,8 @@
 // (settings.connectionProfileId - '' = State Engine's), with its own max
 // tokens (settings.catchUpMaxTokens) and system header. It keeps writing to
 // the chat it started on even if the user switches chats. Cancel stops it
-// between chunks. A chunk whose run fails is reported and skipped; a run
+// between chunks. The same preset re-extracts a single message the user
+// edited (reextractMessage()). A chunk whose run fails is reported and skipped; a run
 // State Engine turns away because another independent preset is running is
 // retried after a short wait.
 
@@ -36,6 +37,7 @@ import { CATCH_UP_MEMORY_VARIABLE, memoryVariableDef } from './memory-variable.j
 import { convertExtractedItems, createEntityResolver } from './converter.js';
 import { sourceMessageId } from './messages.js';
 import { uncoveredIndexes, toChunks, carryOver, chunkContext, sourceIndexFor } from './catch-up-plan.js';
+import { rememberExtracted } from '../memory/message-fingerprints.js';
 
 export const CATCH_UP_PRESET = 'Archivist History Catch-Up';
 
@@ -147,9 +149,19 @@ async function runChunk(chatId) {
     }
 }
 
-async function runPass(ref, chat) {
+// One run of the catch-up preset at a time - a pass's chunks and an edited
+// message's re-extraction share the preset's context, so each
+// set-context / run / read / clear must finish before the next begins.
+let presetQueue = Promise.resolve();
+function withPreset(task) {
+    const run = presetQueue.then(task, task);
+    presetQueue = run.catch(() => {});
+    return run;
+}
+
+// Configures the preset for a run from the user's settings.
+async function preparePreset() {
     const settings = getSettings();
-    const chatKey = chatKeyFor(ref);
     await ensureCatchUpPreset();
     await configureIndependentPreset(CATCH_UP_PRESET, {
         enabled: true,
@@ -157,6 +169,40 @@ async function runPass(ref, chat) {
         maxTokens: Number(settings.catchUpMaxTokens) || null,
         promptedHeader: CATCH_UP_HEADER,
     });
+}
+
+// Extracts and stores the memories of the messages `chunk` (indexes into
+// `chat`) for `ref`'s chat, with `records` as what is already remembered.
+// Resolves to { ok, error, added } - added: the records stored.
+async function extractChunk(ref, chat, chunk, records, resolveEntity) {
+    return withPreset(async () => {
+        await updateIndependentPresetContext(CATCH_UP_PRESET, chunkContext(chat, chunk, carryOver(records, chunk[0])));
+        const { ok, error } = await runChunk(ref.chatId);
+
+        const value = await getVariableValue(ref.chatId, CATCH_UP_MEMORY_VARIABLE);
+        const items = Array.isArray(value) ? value : [];
+        if (items.length) await setVariableValue(ref.chatId, CATCH_UP_PRESET, CATCH_UP_MEMORY_VARIABLE, []);
+        if (!ok && items.length === 0) return { ok: false, error, added: [] };
+
+        const fields = await convertExtractedItems(items, {
+            resolveEntity,
+            sourceFor: (item) => {
+                const index = sourceIndexFor(item, chunk, chat);
+                return sourceMessageId(ref.chatId, index, chat[index]);
+            },
+        });
+        const added = await addMemoryRecords(ref, fields);
+        for (const index of chunk) rememberExtracted(ref.chatId, chat[index]);
+        return { ok: true, error: null, added };
+    });
+}
+
+const entityResolverFor = async (chatId) => createEntityResolver(await listObjectTypeIds(), (type, name) => getObjectByAlias(chatId, type, name));
+
+async function runPass(ref, chat) {
+    const settings = getSettings();
+    const chatKey = chatKeyFor(ref);
+    await preparePreset();
 
     const records = await getAllMemories(chatKey);
     const indexes = uncoveredIndexes(chat, records, ref.chatId, getChatEntry(chatKey)?.catchUp ?? null);
@@ -164,32 +210,18 @@ async function runPass(ref, chat) {
     update({ total: chunks.length, messages: indexes.length });
     if (chunks.length === 0) return 'nothing';
 
-    const resolveEntity = createEntityResolver(await listObjectTypeIds(), (type, name) => getObjectByAlias(ref.chatId, type, name));
+    const resolveEntity = await entityResolverFor(ref.chatId);
     let contiguous = true; // every chunk so far succeeded - the resume point may advance
 
     for (let k = 0; k < chunks.length; k++) {
         if (cancelRequested) return 'cancelled';
         const chunk = chunks[k];
-        await updateIndependentPresetContext(CATCH_UP_PRESET, chunkContext(chat, chunk, carryOver(records, chunk[0])));
-        const { ok, error } = await runChunk(ref.chatId);
-
-        const value = await getVariableValue(ref.chatId, CATCH_UP_MEMORY_VARIABLE);
-        const items = Array.isArray(value) ? value : [];
-        if (items.length) await setVariableValue(ref.chatId, CATCH_UP_PRESET, CATCH_UP_MEMORY_VARIABLE, []);
-
-        if (!ok && items.length === 0) {
+        const { ok, error, added } = await extractChunk(ref, chat, chunk, records, resolveEntity);
+        if (!ok) {
             contiguous = false;
             update({ failedChunks: progress.failedChunks + 1, lastError: error });
             console.warn(LOG_PREFIX, `catch-up chunk ${k + 1} of ${chunks.length} failed: ${error}`);
         } else {
-            const fields = await convertExtractedItems(items, {
-                resolveEntity,
-                sourceFor: (item) => {
-                    const index = sourceIndexFor(item, chunk, chat);
-                    return sourceMessageId(ref.chatId, index, chat[index]);
-                },
-            });
-            const added = await addMemoryRecords(ref, fields);
             records.push(...added);
             if (contiguous) {
                 const last = chunk[chunk.length - 1];
@@ -201,6 +233,19 @@ async function runPass(ref, chat) {
         update({ done: k + 1 });
     }
     return progress.failedChunks === chunks.length ? 'failed' : 'completed';
+}
+
+// Extracts the memories of one message again - after the user edited it
+// (src/memory/message-sync.js has removed the old ones). `ref` is its chat,
+// `chat` the messages as they are now. Resolves to the records stored;
+// throws if the run failed.
+export async function reextractMessage(ref, chat, index) {
+    if (!chat?.[index] || chat[index].is_system || !String(chat[index].mes ?? '').trim()) return [];
+    await preparePreset();
+    const records = await getAllMemories(chatKeyFor(ref));
+    const { ok, error, added } = await extractChunk(ref, chat, [index], records, await entityResolverFor(ref.chatId));
+    if (!ok) throw new Error(error);
+    return added;
 }
 
 // Starts a catch-up pass for the open chat, in the background. Resolves to

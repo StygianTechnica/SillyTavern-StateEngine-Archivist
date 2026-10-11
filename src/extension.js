@@ -16,6 +16,7 @@ import { exposeArchivistApi } from './public-api.js';
 import { startLiveExtraction } from './extraction/live.js';
 import { addSettingsDrawer } from './ui/settings-drawer.js';
 import { startChatLifecycle } from './memory/chat-lifecycle.js';
+import { startMessageSync } from './memory/message-sync.js';
 
 // What Archivist provides to other extensions (see docs/architecture.md,
 // "Capabilities"): memory.store - it stores State Engine's extracted
@@ -30,6 +31,9 @@ async function startMemoryCore() {
     eventSource.on(eventTypes.CHAT_CHANGED, () => void loadCurrentChat());
     startChatLifecycle();
     await loadCurrentChat();
+    // After the first load, so its CHAT_CHANGED listener runs after the
+    // memory core's own (which reloads the chat first).
+    startMessageSync();
     exposeArchivistApi();
 }
 

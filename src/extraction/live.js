@@ -37,6 +37,7 @@ import { getCurrentChatRef } from '../memory/registry.js';
 import { MEMORY_VARIABLE, memoryVariableDef } from './memory-variable.js';
 import { convertExtractedItems, createEntityResolver } from './converter.js';
 import { sourceMessageId, lastReplyIndex } from './messages.js';
+import { rememberExtracted } from '../memory/message-fingerprints.js';
 
 export const LIVE_PRESET = 'Archivist Recent Memory Collection';
 
@@ -140,7 +141,9 @@ async function storeLiveItems(ref, items) {
 
     const resolveEntity = createEntityResolver(await listObjectTypeIds(), (type, name) => getObjectByAlias(ref.chatId, type, name));
     const fields = await convertExtractedItems(items, { sourceFor: () => source, resolveEntity });
-    return addMemoryRecords(ref, fields);
+    const stored = await addMemoryRecords(ref, fields);
+    if (index !== -1) rememberExtracted(ref.chatId, chat[index]);
+    return stored;
 }
 
 async function harvestOnce(ref, state) {

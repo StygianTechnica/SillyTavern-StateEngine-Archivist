@@ -45,13 +45,20 @@ MVP):
 | `scope`             | string     | `scene` (this scene only), `session` (this part of the story), `long_term` (from now on) |
 | `text`              | string     | The memory, as one self-contained sentence                     |
 | `entity_ids`        | string[]   | Ids of the State Engine objects it is about (`chr_...`, `loc_...`) - only objects State Engine knows |
-| `source_message_id` | string     | The chat message it came from: `<chatId>#<message index>@<send_date>` |
+| `source_message_id` | string     | The chat message - and swipe - it came from: `<chatId>#<message index>@<send_date>` (SillyTavern's `send_date` identifies one message and swipe; the index is kept current as messages are deleted) |
 | `chat_id`           | string     | The SillyTavern chat it belongs to                             |
 | `created_at`        | string     | ISO timestamp of when Archivist stored it                      |
 | `importance`        | string     | `low`, `medium` or `high`                                      |
 
 Every record handed out is a **copy** - changing it changes nothing in
 Archivist.
+
+Memories follow their messages: a regenerated, deleted or edited message's
+memories are removed or replaced, and for the **open chat** the APIs leave
+out memories of swipes that aren't the one shown (they come back when the
+user swipes back). So what you read always matches the story as it stands.
+`getAllMemories()` for a chat that is not open returns everything stored,
+including other swipes'.
 
 ## The three APIs
 
@@ -99,7 +106,8 @@ those two can answer instantly. For another chat, filter
 ## Following changes
 
 After any change to a chat's memory - new memories stored, the user
-deleting some in the memory browser, a chat renamed - Archivist emits
+deleting some in the memory browser, a reply regenerated, swiped or edited,
+a chat renamed - Archivist emits
 `MEMORIES_CHANGED_EVENT` (`'archivist_memories_changed'`) on SillyTavern's
 event bus, with `{ chatId, chatKey }`. Re-read on receipt:
 

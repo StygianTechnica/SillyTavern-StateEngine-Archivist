@@ -119,6 +119,25 @@ the left; the chosen chat's memories on the right, newest first.
   or group deleted - is **struck through and tagged *missing***. Its
   memories are kept until you delete them here.
 
+### When messages change
+
+Every memory is attached to the exact message - and swipe - it came from,
+so you never have to clean up after rewriting the story:
+
+| You...                         | That message's memories...                                            |
+|--------------------------------|------------------------------------------------------------------------|
+| **regenerate** a reply         | are removed; the new reply's are stored as usual                       |
+| **swipe** to another reply     | are set aside, and come back if you swipe back                         |
+| **delete a swipe**             | are removed                                                            |
+| **delete a message**           | are removed (memories of later messages stay attached to theirs)       |
+| **edit a message**             | are removed and, while Archivist is enabled, the message is read again |
+
+An edit only counts when the text changed. Re-reading an edited message uses
+the catch-up preset and connection (see above). Set-aside swipe memories
+aren't shown anywhere - not in the drawer, the memory browser, or what other
+extensions read for the open chat - but they stay stored until that swipe is
+deleted.
+
 ### Renamed and deleted chats
 
 - **Renamed** - its memories follow it to the new name automatically.
@@ -148,8 +167,6 @@ rest of your SillyTavern data.
   Engine's manager. State Engine warns before you deactivate or delete it
   while Archivist runs; if you did anyway, Archivist switches it back on the
   next time a chat opens, or at once with **Repair**.
-- **Memories from a swiped-away reply** - they stay stored (Archivist
-  doesn't change memories); delete them in the memory browser.
 
 ## Further reading
 
