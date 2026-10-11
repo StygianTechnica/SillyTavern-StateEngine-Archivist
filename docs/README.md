@@ -44,8 +44,13 @@ Archivist decides what is asked for, then stores what comes back.
   memories are stored. Turning it off stores nothing new; what is already
   stored stays, and other extensions can still read it.
 - **Status** - *On*, *Off*, or *Not working: ...* with the reason.
+- **Last update** - what happened the last time State Engine sent memories:
+  how many were stored, or why they couldn't be. Your first stop when
+  memories don't appear.
 - **Repair** (while enabled) - puts Archivist's State Engine preset back if
-  it was deleted, and switches it back on for this chat.
+  it was deleted, switches it back on for this chat, and stores anything
+  waiting in its variable.
+- **Catch-up** - see below.
 - **This chat** - how many memories the open chat has, and the newest
   five. Hover one for who it is about, the message it came from, and when
   it was stored.
@@ -73,6 +78,32 @@ update improves the built-in instructions (it then replaces them once).
 update response, memories included. A few memories add 50-80 tokens each; a
 response cut off at the limit can't be read, and the whole update is lost.
 Around 800-1000 is a good setting.
+
+### Catch-up: memories from earlier messages
+
+For a chat that existed before you enabled Archivist (or while it was off):
+
+1. Open the chat, then **Extensions -> Archivist -> Catch-up**.
+2. Choose a **Connection**: *Same as State Engine*, or any SillyTavern
+   connection profile - e.g. a model with a bigger context, or a cheaper one,
+   for a long history.
+3. **Messages per chunk** (default 50) - how many messages each call reads.
+   Smaller chunks are more reliable on small models.
+4. **Max tokens** (default 2000) - the longest answer a call may give. A
+   chunk of many messages can hold many memories; too low, and the answer is
+   cut off and lost.
+5. **Run catch-up for this chat**. The status line shows *Chunk 3 of 12 - 14
+   memories stored so far*; keep chatting, or switch chats - it keeps working
+   on the chat it started on. **Cancel** stops after the chunk in progress.
+
+Messages that already have memories (from live extraction or an earlier
+catch-up) are skipped, and Archivist remembers how far catch-up got - run it
+again later and it only reads what's new, or retries chunks that failed.
+Each chunk is told what is already remembered, so it doesn't repeat it.
+
+Catch-up uses its own State Engine preset, **Archivist History Catch-Up**
+(an independent preset - it doesn't take part in the per-message update).
+It works whether or not *Enable Archivist* is on.
 
 ### The memory browser
 
@@ -107,7 +138,10 @@ rest of your SillyTavern data.
 
 - **Status says *Not working*** - press **Repair**. If it keeps failing,
   the browser console lines starting with `[Archivist]` say why.
-- **Enabled, but no memories appear** - check that State Engine's prompted
+- **Enabled, but no memories appear** - look at the drawer's **Last
+  update** line first: it says whether memories arrived and why they weren't
+  stored. The browser console has a matching `[Archivist]` line for each.
+  Then check that State Engine's prompted
   updates run (its own variables change after a reply), that its max tokens
   isn't too low (see above), and that
   **Archivist Recent Memory Collection** is active for the chat in State
@@ -116,12 +150,6 @@ rest of your SillyTavern data.
   next time a chat opens, or at once with **Repair**.
 - **Memories from a swiped-away reply** - they stay stored (Archivist
   doesn't change memories); delete them in the memory browser.
-
-## Coming next
-
-- **Catch-up** - extracting memories from chat history that existed before
-  Archivist was enabled, in the background, through a separate State
-  Engine preset - so older chats get memory too, without waiting.
 
 ## Further reading
 

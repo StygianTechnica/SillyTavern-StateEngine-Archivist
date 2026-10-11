@@ -16,6 +16,7 @@ export function createFakeStateEngine() {
     const values = new Map();       // `${chatId}|${qualified}` -> value
     const objects = [];             // { id, type, names: [] }
     const calls = [];
+    const statuses = new Map();     // `${namespace}.${name}` -> independent preset status
 
     const preset = (namespace, name) => presets.get(`${namespace}.${name}`);
     const qualified = (ref) => `${ref.namespace}__${ref.variableName}`;
@@ -92,6 +93,58 @@ export function createFakeStateEngine() {
             announce(chatId);
             return true;
         },
+        createIndependentPreset(extensionId, instanceId, def) {
+            const created = stateEngine.createPreset(extensionId, instanceId, { namespace: def.namespace, name: def.name, description: def.description });
+            if (!created) return null;
+            const p = preset(def.namespace, def.name);
+            p.independentPreset = true;
+            p.independentConfig = { ...def };
+            delete p.independentConfig.namespace;
+            delete p.independentConfig.name;
+            return { ...created, independentPreset: true };
+        },
+        configureIndependentPreset(extensionId, instanceId, namespace, name, config) {
+            log('configureIndependentPreset', [namespace, name, config]);
+            const p = preset(namespace, name);
+            if (!p) return null;
+            p.independentConfig = { ...(p.independentConfig || {}), ...config };
+            return p.independentConfig;
+        },
+        updateIndependentPresetContext(extensionId, instanceId, namespace, name, context) {
+            const p = preset(namespace, name);
+            if (!p) return null;
+            p.independentConfig = { ...(p.independentConfig || {}), context };
+            return true;
+        },
+        // What State Engine's run does, with the model played by
+        // fakeEngine.respond(context, { chatId, preset }): it returns the
+        // list to write into the preset's prompted variable, 'busy' (another
+        // independent preset is running), or throws (the model call failed).
+        async runIndependentPreset(extensionId, instanceId, chatId, ref) {
+            const p = preset(ref.namespace, ref.name);
+            log('runIndependentPreset', [chatId, ref, p?.independentConfig?.context]);
+            if (!p) return false;
+            const record = (status) => { statuses.set(`${ref.namespace}.${ref.name}`, { lastRunAt: Date.now(), ...status }); };
+            let answer;
+            try {
+                answer = await api.respond(p.independentConfig?.context, { chatId, preset: p });
+            } catch (err) {
+                record({ lastOutcome: 'skipped-parse-error', lastError: err.message });
+                return false;
+            }
+            if (answer === 'busy') {
+                record({ lastOutcome: 'skipped-in-progress', lastError: null });
+                return false;
+            }
+            const [q] = [...p.variables.keys()];
+            values.set(`${chatId}|${q}`, structuredClone(answer));
+            announce(chatId);
+            record({ lastOutcome: 'updated', lastError: null });
+            return true;
+        },
+        getIndependentPresetStatus(namespace, name) {
+            return statuses.get(`${namespace}.${name}`) ?? null;
+        },
         listObjectTypes() {
             return OBJECT_TYPES.map((id) => ({ id }));
         },
@@ -105,9 +158,11 @@ export function createFakeStateEngine() {
         },
     };
 
-    return {
+    const api = {
         stateEngine,
         calls,
+        // The model for independent preset runs - replace per test.
+        respond: async () => [],
         presets,
         isActive: (chatId, name) => active.get(chatId)?.has(name) ?? false,
         addObject: (id, type, ...names) => objects.push({ id, type, names }),
@@ -118,6 +173,7 @@ export function createFakeStateEngine() {
         },
         readValue: (chatId, qualifiedName) => values.get(`${chatId}|${qualifiedName}`),
     };
+    return api;
 }
 
 export let fake = createFakeStateEngine();

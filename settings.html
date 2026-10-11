@@ -17,6 +17,40 @@
                         <i class="fa-solid fa-screwdriver-wrench"></i><span>Repair</span>
                     </div>
                 </div>
+                <small id="ar_last_harvest" class="ar-hint"></small>
+            </div>
+
+            <hr class="sysHR" />
+
+            <div class="ar-section">
+                <div class="ar-heading">
+                    <i class="fa-solid fa-clock-rotate-left"></i>
+                    <b>Catch-up</b>
+                </div>
+                <small class="ar-hint">Extract memories from this chat's earlier messages, in the background - keep chatting while it runs. Messages that already have memories are skipped, and a later run picks up where this one stopped.</small>
+                <label class="ar-field" title="The model catch-up runs on. State Engine's own connection, or any SillyTavern connection profile - e.g. a cheaper or larger-context model for long histories.">
+                    <span>Connection</span>
+                    <select id="ar_connection" class="text_pole"></select>
+                </label>
+                <div class="ar-row">
+                    <label class="ar-field" title="How many messages each catch-up call reads at once. Fewer: smaller, more reliable calls; more: fewer calls.">
+                        <span>Messages per chunk</span>
+                        <input id="ar_chunk_size" type="number" class="text_pole" min="5" max="200" step="1" />
+                    </label>
+                    <label class="ar-field" title="The longest answer a catch-up call may give. A chunk of many messages can hold many memories - too low, and the answer is cut off and lost.">
+                        <span>Max tokens</span>
+                        <input id="ar_catchup_tokens" type="number" class="text_pole" min="300" max="16000" step="100" />
+                    </label>
+                </div>
+                <div class="ar-row">
+                    <div id="ar_catchup_run" class="menu_button menu_button_icon" title="Extract memories from this chat's earlier messages">
+                        <i class="fa-solid fa-play"></i><span>Run catch-up for this chat</span>
+                    </div>
+                    <div id="ar_catchup_cancel" class="menu_button menu_button_icon" title="Stop after the chunk in progress - what is stored stays">
+                        <i class="fa-solid fa-stop"></i><span>Cancel</span>
+                    </div>
+                </div>
+                <small id="ar_catchup_status" class="ar-status"></small>
             </div>
 
             <hr class="sysHR" />

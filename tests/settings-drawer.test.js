@@ -113,6 +113,48 @@ describe('the Archivist drawer', () => {
         document.querySelector('[data-mb="close"]').click();
     });
 
+    it('shows what happened to the last memories State Engine sent', async () => {
+        getSettings().enabled = true;
+        await openDrawer();
+        expect($('ar_last_harvest').textContent).toBe('Last update: no new memories from State Engine yet this session.');
+
+        fake.writeValue('Chat A', 'archivist__memories', [{ text: 'Mira laughed.' }, { text: 'Mira left.' }]);
+        await waitFor(() => expect($('ar_last_harvest').textContent).toMatch(/^Last update \(.+\): stored 2 memories\.$/));
+        expect($('ar_last_harvest').classList.contains('ar-status-error')).toBe(false);
+    });
+
+    it('offers State Engine\'s connection or any connection profile for catch-up, and saves the choice', async () => {
+        getContext().extensionSettings.connectionManager = { profiles: [{ id: 'p1', name: 'Big Model' }] };
+        await openDrawer();
+        const select = $('ar_connection');
+        expect([...select.options].map((o) => [o.value, o.textContent])).toEqual([['', 'Same as State Engine'], ['p1', 'Big Model']]);
+        select.value = 'p1';
+        select.dispatchEvent(new Event('change'));
+        expect(getSettings().connectionProfileId).toBe('p1');
+    });
+
+    it('keeps catch-up numbers within limits', async () => {
+        await openDrawer();
+        const chunk = $('ar_chunk_size');
+        expect(chunk.value).toBe('50');
+        chunk.value = '1';
+        chunk.dispatchEvent(new Event('change'));
+        expect(getSettings().chunkSize).toBe(5);
+        expect(chunk.value).toBe('5');
+    });
+
+    it('runs catch-up for this chat and shows its progress, then the result', async () => {
+        getContext().chat = [{ is_user: true, name: 'User', mes: 'hello', send_date: 'd0' }, { is_user: false, name: 'Mira', mes: 'Mira waves.', send_date: 'd1' }];
+        fake.respond = async () => [{ text: 'Mira waved hello.', message_index: 1 }];
+        await openDrawer();
+        expect($('ar_catchup_cancel').hidden).toBe(true);
+        $('ar_catchup_run').click();
+        await waitFor(() => expect($('ar_catchup_status').textContent).toBe('Done: 1 memory stored from 2 messages.'));
+        expect($('ar_catchup_run').hidden).toBe(false);
+        expect($('ar_catchup_cancel').hidden).toBe(true);
+        await waitFor(() => expect($('ar_chat_info').textContent).toBe('1 memory stored for this chat:'));
+    });
+
     it('follows chat changes', async () => {
         await openDrawer();
         await addMemoryRecords(getCurrentChatRef(), [item('alice memory')]);

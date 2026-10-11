@@ -6,11 +6,13 @@
 // file only wires it to the page.
 
 import { LOG_PREFIX } from '../constants.js';
-import { getSettings } from '../settings.js';
+import { getSettings, saveSettings } from '../settings.js';
 import { getAllMemories, MEMORIES_CHANGED_EVENT } from '../memory/archivist.js';
-import { getCurrentChatRef } from '../memory/registry.js';
-import { getLiveHealth, onLiveHealthChange, repairLiveExtraction, setArchivistEnabled } from '../extraction/live.js';
-import { statusLine, chatSummary, recentMemories, memoryView } from './drawer-model.js';
+import { getCurrentChatRef, chatKeyFor } from '../memory/registry.js';
+import { getLiveHealth, onLiveHealthChange, repairLiveExtraction, setArchivistEnabled, getLastHarvest, onHarvest } from '../extraction/live.js';
+import { statusLine, chatSummary, recentMemories, memoryView, lastHarvestLine, catchUpLine } from './drawer-model.js';
+import { startCatchUp, cancelCatchUp, getCatchUpProgress, onCatchUpProgress, isCatchUpRunning } from '../extraction/catch-up.js';
+import { listConnectionProfiles } from './connection-profiles.js';
 import { openMemoryBrowser } from './memory-browser.js';
 
 // SillyTavern resolves extension templates relative to
@@ -32,6 +34,11 @@ function renderStatus() {
     byId('ar_enabled').checked = enabled;
     // Repair is for a switched-on Archivist (off, there is nothing to fix).
     byId('ar_repair').hidden = !enabled;
+    const last = lastHarvestLine(getLastHarvest(), enabled);
+    const lastEl = byId('ar_last_harvest');
+    lastEl.textContent = last.text;
+    lastEl.hidden = !last.text;
+    lastEl.classList.toggle('ar-status-error', last.error);
 }
 
 function memoryRow(record) {
@@ -51,6 +58,70 @@ function memoryRow(record) {
     text.textContent = view.text;
     row.append(meta, text);
     return row;
+}
+
+// ---- catch-up
+
+function fillConnections() {
+    const select = byId('ar_connection');
+    if (!select) return;
+    const chosen = getSettings().connectionProfileId || '';
+    const options = [{ id: '', name: 'Same as State Engine' }, ...listConnectionProfiles()];
+    if (chosen && !options.some((o) => o.id === chosen)) options.push({ id: chosen, name: '(profile no longer exists)' });
+    select.replaceChildren(...options.map((o) => {
+        const option = document.createElement('option');
+        option.value = o.id;
+        option.textContent = o.name;
+        return option;
+    }));
+    select.value = chosen;
+}
+
+function renderCatchUp() {
+    const status = byId('ar_catchup_status');
+    if (!status) return;
+    const ref = getCurrentChatRef();
+    const running = isCatchUpRunning();
+    const line = catchUpLine(getCatchUpProgress(), ref ? chatKeyFor(ref) : null);
+    status.textContent = line.text;
+    status.hidden = !line.text;
+    status.classList.toggle('ar-status-error', line.error);
+    byId('ar_catchup_run').hidden = running;
+    byId('ar_catchup_run').dataset.disabled = ref ? 'false' : 'true';
+    byId('ar_catchup_run').title = ref ? 'Extract memories from this chat\'s earlier messages' : 'Open a chat first';
+    byId('ar_catchup_cancel').hidden = !running;
+}
+
+// A number field bound to a setting, kept within [min, max].
+function bindNumber(id, key, min, max) {
+    const input = byId(id);
+    input.value = String(getSettings()[key]);
+    input.addEventListener('change', () => {
+        const value = Math.min(max, Math.max(min, Math.round(Number(input.value)) || getSettings()[key]));
+        getSettings()[key] = value;
+        input.value = String(value);
+        saveSettings();
+    });
+}
+
+function wireCatchUp() {
+    fillConnections();
+    const select = byId('ar_connection');
+    // Profiles can be added or renamed while the page is open.
+    select.addEventListener('focus', fillConnections);
+    select.addEventListener('change', () => {
+        getSettings().connectionProfileId = select.value;
+        saveSettings();
+    });
+    bindNumber('ar_chunk_size', 'chunkSize', 5, 200);
+    bindNumber('ar_catchup_tokens', 'catchUpMaxTokens', 300, 16000);
+    byId('ar_catchup_run').addEventListener('click', async () => {
+        if (byId('ar_catchup_run').dataset.disabled === 'true') return;
+        if (!await startCatchUp()) toastr.info('Catch-up is already running, or no chat is open.', 'Archivist');
+    });
+    byId('ar_catchup_cancel').addEventListener('click', () => cancelCatchUp());
+    onCatchUpProgress(renderCatchUp);
+    renderCatchUp();
 }
 
 let chatToken = 0;
@@ -111,11 +182,14 @@ export async function addSettingsDrawer() {
     });
 
     byId('ar_open_browser').addEventListener('click', () => void openMemoryBrowser());
+    wireCatchUp();
 
     onLiveHealthChange(renderStatus);
+    onHarvest(renderStatus);
     const { eventSource, eventTypes } = SillyTavern.getContext();
     eventSource.on(MEMORIES_CHANGED_EVENT, refreshChat);
     eventSource.on(eventTypes.CHAT_CHANGED, refreshChat);
+    eventSource.on(eventTypes.CHAT_CHANGED, renderCatchUp);
 
     renderStatus();
     refreshChat();

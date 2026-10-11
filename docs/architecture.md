@@ -28,6 +28,8 @@ src/extraction/               State Engine produces memories; Archivist stores t
   converter.js                model output -> memory record fields (entity names -> ids)
   messages.js                 source_message_id for a chat message
   live.js                     the live preset, harvesting, enable switch, self-repair
+  catch-up-plan.js            which messages a catch-up pass reads, chunks, context text
+  catch-up.js                 the catch-up preset and the background pass
 
 src/ui/                       the drawer, the memory browser, confirmations
 src/public-api.js             what other extensions use (docs/api.md)
@@ -102,7 +104,10 @@ ordinary per-message update - no extra model call.
    overlapping event finds nothing to store twice), converts the items
    (`converter.js`) and stores them with `addMemoryRecords()`, attributed
    to the newest AI message. If storing fails, the items are kept and
-   retried with the next harvest.
+   retried with the next harvest. Each harvest that received memories is
+   reported - `getLastHarvest()`, the drawer's *Last update* line and an
+   `[Archivist]` console line - so a user can see whether memories arrive
+   and why they weren't stored.
 3. The indexes are rebuilt and `archivist_memories_changed` is emitted.
 
 Three details of the variable (`memory-variable.js`):
@@ -140,6 +145,42 @@ re-activates the preset; the drawer's **Repair** does the same at once.
 Event listeners are registered before the preset is set up, so a failure
 at startup can be repaired without a reload. Stored memory is never at
 risk: it lives in Archivist's files, not in State Engine variables.
+
+## Catch-up
+
+`src/extraction/catch-up.js` (spec sections 5 and 6). An **independent**
+State Engine preset, **Archivist History Catch-Up**, with its own variable
+`archivist__catchup_memories` (variable names are unique across presets) -
+kept apart from live extraction so both run at once.
+
+A pass, for the chat open when it starts:
+
+1. **Snapshot** the chat's messages. **Plan** (`catch-up-plan.js`) which to
+   send: not hidden ones, not ones some stored memory came from (matched by
+   index *and* send date), not a user message whose reply is covered (live
+   extraction attributes a turn's memories to the reply), and not ones at or
+   before the chat's resume point (`entry.catchUp = { index, sendDate }`,
+   trusted only while that message is unchanged). Chunk them by
+   `settings.chunkSize`.
+2. **Configure** the preset each pass: `connectionProfileId` (the user's
+   pick - `''` is State Engine's own), `maxTokens` (`catchUpMaxTokens`), and
+   its own system header - State Engine's talks about a "most recent
+   roleplay message" a history chunk doesn't have.
+3. **Per chunk:** set the preset's context to an *Already remembered* list
+   (the newest medium/high memories from before the chunk, within 1500
+   characters) followed by the messages, each as `[#index] Name: text`;
+   `runIndependentPreset()`; read and clear the variable; convert - each item
+   attributed to the `message_index` it names, else the chunk's last reply -
+   and `addMemoryRecords()`. While every chunk so far has succeeded, move the
+   resume point to the chunk's last message.
+4. A run State Engine turns away because another independent preset is
+   running (`skipped-in-progress`) is retried every 2 s, up to 30 times. A
+   chunk that still fails is counted and reported; the pass carries on and
+   the resume point stays before it, so the next pass retries it.
+
+Progress (`getCatchUpProgress()`, `onCatchUpProgress()`) drives the drawer.
+Cancel stops between chunks. A pass keeps writing to the chat it started on
+if the user switches chats; only one pass runs at a time.
 
 ## Renamed and deleted chats
 

@@ -181,6 +181,15 @@ describe('the memory browser window', () => {
         expect(q('.ar-mb-overlay').hidden).toBe(true);
     });
 
+    it('opens on the open chat even when it has nothing stored yet', async () => {
+        const { deleteChatMemories } = await import('../src/memory/archivist.js');
+        await deleteChatMemories(ALICE);
+        await openMemoryBrowser();
+        await waitFor(() => expect(q('[data-mb="title"]').textContent).toBe('Alice - Chat A'));
+        expect(q('.ar-mb-records .ar-mb-empty').textContent).toMatch(/^No memories stored for this chat yet/);
+        expect(q('[data-chat-key="char:alice.png:Old Chat"]')).not.toBeNull();
+    });
+
     it('says so when nothing is stored at all', async () => {
         const { deleteChatMemories } = await import('../src/memory/archivist.js');
         await deleteChatMemories(ALICE);

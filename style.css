@@ -17,6 +17,28 @@
     opacity: 0.7;
 }
 
+#archivist_settings .ar-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+#archivist_settings .ar-field {
+    display: flex;
+    flex: 1 1 120px;
+    flex-direction: column;
+    gap: 2px;
+}
+
+#archivist_settings .ar-field > span {
+    font-size: 0.85em;
+    opacity: 0.8;
+}
+
+#archivist_settings [hidden] {
+    display: none !important;
+}
+
 #archivist_settings .ar-status-row {
     display: flex;
     align-items: center;
@@ -24,7 +46,7 @@
     gap: 8px;
 }
 
-#archivist_settings .ar-status.ar-status-error {
+#archivist_settings .ar-status-error {
     color: var(--warning, #e0a050);
 }
 

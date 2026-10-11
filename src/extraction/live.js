@@ -104,6 +104,35 @@ export async function syncLivePreset() {
     }
 }
 
+// What happened the last time the live variable held memories - for the
+// drawer and the console, so a user can see whether memories arrive and
+// whether they were stored: { at, chatId, outcome: 'stored' | 'rejected' |
+// 'failed', received, stored, error }, or null before the first. (Reading an
+// empty variable is not reported: State Engine announces every variable
+// change, so empty reads happen all the time.)
+let lastHarvest = null;
+const harvestListeners = new Set();
+
+export function getLastHarvest() {
+    return lastHarvest ? { ...lastHarvest } : null;
+}
+
+// Called with getLastHarvest() after each report.
+export function onHarvest(listener) {
+    harvestListeners.add(listener);
+    return () => harvestListeners.delete(listener);
+}
+
+function reportHarvest(chatId, outcome, received, stored, error = null) {
+    lastHarvest = { at: new Date().toISOString(), chatId, outcome, received, stored, error };
+    if (outcome === 'stored') {
+        console.info(LOG_PREFIX, `stored ${stored} of ${received} new ${received === 1 ? 'memory' : 'memories'} for chat "${chatId}"`);
+    } else {
+        console.warn(LOG_PREFIX, `${received} new ${received === 1 ? 'memory' : 'memories'} for chat "${chatId}" ${outcome === 'rejected' ? 'were not stored' : 'could not be stored'}: ${error}`);
+    }
+    for (const listener of harvestListeners) listener(getLastHarvest());
+}
+
 async function storeLiveItems(ref, items) {
     const chat = SillyTavern.getContext().chat;
     const index = lastReplyIndex(chat);
@@ -124,10 +153,13 @@ async function harvestOnce(ref, state) {
     if (items.length === 0) return;
 
     try {
-        await storeLiveItems(ref, items);
+        const stored = await storeLiveItems(ref, items);
+        if (stored.length > 0) reportHarvest(ref.chatId, 'stored', items.length, stored.length);
+        else reportHarvest(ref.chatId, 'rejected', items.length, 0, 'none of them had the text of a memory');
     } catch (err) {
         state.retry = items;
-        console.warn(LOG_PREFIX, `could not store ${items.length} new memories - will retry with the next update`, err);
+        reportHarvest(ref.chatId, 'failed', items.length, 0, `${err?.message ?? err} - will retry with the next update`);
+        console.warn(LOG_PREFIX, 'storing failed', err);
     }
 }
 
@@ -136,7 +168,14 @@ async function harvestOnce(ref, state) {
 // while one runs makes it go round once more. Never throws.
 export async function harvest(chatId) {
     const ref = getCurrentChatRef();
-    if (!ref || (chatId !== null && chatId !== undefined && chatId !== ref.chatId)) return;
+    if (!ref) {
+        console.debug(LOG_PREFIX, `harvest skipped: no open chat Archivist can identify (State Engine reported chat ${JSON.stringify(chatId)})`);
+        return;
+    }
+    if (chatId !== null && chatId !== undefined && chatId !== ref.chatId) {
+        console.debug(LOG_PREFIX, `harvest skipped: State Engine reported chat ${JSON.stringify(chatId)}, the open chat is ${JSON.stringify(ref.chatId)}`);
+        return;
+    }
 
     const state = harvests.get(ref.chatId) ?? { running: false, again: false, retry: [] };
     harvests.set(ref.chatId, state);

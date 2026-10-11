@@ -24,7 +24,10 @@
 
 import { KNOWN_SUBTYPES } from '../memory/schema.js';
 
+// The live preset's variable, and the catch-up preset's - State Engine
+// variable names are unique across presets, so they differ.
 export const MEMORY_VARIABLE = 'memories';
+export const CATCH_UP_MEMORY_VARIABLE = 'catchup_memories';
 
 const ITEM_SHAPE = [
     'Each item is an object:',

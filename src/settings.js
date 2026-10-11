@@ -13,13 +13,19 @@ const DEFAULTS = {
     enabled: false,
     // Messages per catch-up chunk.
     chunkSize: 50,
-    // SillyTavern Connection Profile for catch-up runs ('' = the active one).
+    // SillyTavern Connection Profile for catch-up runs ('' = State Engine's
+    // own connection).
     connectionProfileId: '',
+    // Max tokens for a catch-up run's answer: a chunk of many messages can
+    // hold many memories.
+    catchUpMaxTokens: 2000,
     // Chat registry: { [chatKey]: entry } - see src/memory/registry.js.
     chats: {},
     // Which version of the live preset's extraction variable is installed
     // (src/extraction/live.js, LIVE_VARIABLE_VERSION). null = none yet.
     liveVariableVersion: null,
+    // The same, for the catch-up preset (src/extraction/catch-up.js).
+    catchUpVariableVersion: null,
 };
 
 // Returns the live settings object, creating it (and filling in any

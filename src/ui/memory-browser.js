@@ -76,9 +76,11 @@ async function loadSelected() {
 // server), redrawn when known.
 async function loadChats() {
     const entries = listChatEntries();
-    if (!state.selectedKey || !getChatEntry(state.selectedKey)) {
-        const open = openChatKey();
-        state.selectedKey = open && getChatEntry(open) ? open : (entries[0]?.chatKey ?? null);
+    const open = openChatKey();
+    // The open chat - even with nothing stored yet - unless another chat
+    // with memories is chosen.
+    if (!state.selectedKey || (!getChatEntry(state.selectedKey) && state.selectedKey !== open)) {
+        state.selectedKey = open ?? entries[0]?.chatKey ?? null;
     }
     render();
     await loadSelected();
@@ -171,13 +173,18 @@ function recordRow(record) {
 
 function renderRecords() {
     const entry = state.selectedKey ? getChatEntry(state.selectedKey) : null;
-    part('title').textContent = entry ? `${entry.displayName ? `${entry.displayName} - ` : ''}${entry.chatId}` : 'No chat selected';
+    // The open chat with nothing stored yet has no registry entry.
+    const openRef = !entry && state.selectedKey && state.selectedKey === openChatKey() ? getCurrentChatRef() : null;
+    const shownChat = entry ?? openRef;
+    part('title').textContent = shownChat ? `${shownChat.displayName ? `${shownChat.displayName} - ` : ''}${shownChat.chatId}` : 'No chat open';
     part('toolbar').hidden = !entry;
     part('chatActions').hidden = !entry;
     const list = part('records');
     if (!entry) {
-        list.replaceChildren();
         part('count').textContent = '';
+        list.replaceChildren(el('div', 'ar-mb-empty', openRef
+            ? 'No memories stored for this chat yet. With Archivist enabled, they are stored as State Engine extracts them after each AI reply - the drawer\'s "Last update" line shows what happened the last time.'
+            : 'No chat is open, and no chat has memories stored yet.'));
         return;
     }
     renderFilters();
