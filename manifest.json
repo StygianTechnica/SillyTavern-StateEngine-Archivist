@@ -4,6 +4,7 @@
     "description": "Stores, indexes and serves the structured memory records State Engine extracts from each chat, with a catch-up pass over existing chat history. Built on the State Engine API.",
     "version": "0.1.0",
     "js": "src/index.js",
+    "css": "style.css",
     "loading_order": 100,
     "requires": [],
     "optional": [],

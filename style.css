@@ -1,0 +1,61 @@
+/* ---------------------------------------------------------------
+   Archivist drawer (settings.html, src/ui/settings-drawer.js)
+   --------------------------------------------------------------- */
+#archivist_settings .ar-section {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+#archivist_settings .ar-heading {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+#archivist_settings .ar-hint {
+    opacity: 0.7;
+}
+
+#archivist_settings .ar-status-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+#archivist_settings .ar-status.ar-status-error {
+    color: var(--warning, #e0a050);
+}
+
+#archivist_settings .ar-recent {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+#archivist_settings .ar-memory {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 4px 6px;
+    border-left: 3px solid var(--ar-importance, transparent);
+    border-radius: 4px;
+    background: var(--black30a, rgba(0, 0, 0, 0.15));
+}
+
+#archivist_settings .ar-memory.ar-importance-high { --ar-importance: #e05555; }
+#archivist_settings .ar-memory.ar-importance-medium { --ar-importance: #d4b03c; }
+#archivist_settings .ar-memory.ar-importance-low { --ar-importance: #8a93a0; }
+
+#archivist_settings .ar-memory-meta {
+    display: flex;
+    gap: 6px;
+    font-size: 0.8em;
+    opacity: 0.7;
+}
+
+#archivist_settings .ar-memory-text {
+    font-size: 0.9em;
+    overflow-wrap: anywhere;
+}

@@ -1,0 +1,35 @@
+<div id="archivist_settings">
+    <div class="inline-drawer">
+        <div class="inline-drawer-toggle inline-drawer-header">
+            <b>Archivist</b>
+            <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+        </div>
+        <div class="inline-drawer-content">
+
+            <div class="ar-section">
+                <label class="checkbox_label" title="Store memories from each new AI message. State Engine extracts them as part of its regular update - no extra model call.">
+                    <input id="ar_enabled" type="checkbox" />
+                    <span>Enable Archivist</span>
+                </label>
+                <div class="ar-status-row">
+                    <small id="ar_status" class="ar-status"></small>
+                    <div id="ar_repair" class="menu_button menu_button_icon" title="Recreate Archivist's State Engine preset if it was deleted, and switch it back on for this chat">
+                        <i class="fa-solid fa-screwdriver-wrench"></i><span>Repair</span>
+                    </div>
+                </div>
+            </div>
+
+            <hr class="sysHR" />
+
+            <div class="ar-section">
+                <div class="ar-heading">
+                    <i class="fa-solid fa-book-bookmark"></i>
+                    <b>This chat</b>
+                </div>
+                <small id="ar_chat_info" class="ar-hint"></small>
+                <div id="ar_recent" class="ar-recent"></div>
+            </div>
+
+        </div>
+    </div>
+</div>

@@ -14,6 +14,7 @@ import { getSettings } from './settings.js';
 import { loadCurrentChat } from './memory/archivist.js';
 import { exposeArchivistApi } from './public-api.js';
 import { startLiveExtraction } from './extraction/live.js';
+import { addSettingsDrawer } from './ui/settings-drawer.js';
 
 // What Archivist provides to other extensions (see docs/architecture.md,
 // "Capabilities"): memory.store - it stores State Engine's extracted
@@ -84,5 +85,12 @@ export async function initExtension() {
         await startLiveExtraction();
     } catch (err) {
         console.error(`${LOG_PREFIX} live memory extraction failed to start.`, err);
+    }
+    // The drawer shows live extraction's state - including a failure to
+    // start, with its Repair button - so it is added either way.
+    try {
+        await addSettingsDrawer();
+    } catch (err) {
+        console.error(`${LOG_PREFIX} the settings drawer failed to load.`, err);
     }
 }

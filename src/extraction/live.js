@@ -142,21 +142,69 @@ export async function harvest(chatId) {
     }
 }
 
-// Puts the Live preset back in working order now (see "Self-repair"
-// above) - for the drawer's repair button. Throws if State Engine refuses.
-export async function repairLiveExtraction() {
-    await ensureLivePreset();
-    await syncLivePreset();
+// Whether live extraction is working, for the drawer: 'ok', 'off'
+// (Archivist disabled) or 'error' with the last setup/repair failure.
+let health = { state: 'off', error: null };
+const healthListeners = new Set();
+
+export function getLiveHealth() {
+    return { ...health };
 }
 
-// Sets up the Live preset and starts following State Engine's updates.
-// Call once, after the memory core has loaded the open chat.
+// Called with getLiveHealth() whenever it changes.
+export function onLiveHealthChange(listener) {
+    healthListeners.add(listener);
+    return () => healthListeners.delete(listener);
+}
+
+function setHealth(next) {
+    health = next;
+    for (const listener of healthListeners) listener(getLiveHealth());
+}
+
+// syncLivePreset(), recording the outcome in getLiveHealth(). Never throws.
+async function syncAndRecord() {
+    try {
+        await syncLivePreset();
+        setHealth({ state: getSettings().enabled ? 'ok' : 'off', error: null });
+    } catch (err) {
+        console.warn(LOG_PREFIX, 'could not set up the Live preset', err);
+        setHealth({ state: 'error', error: err?.message ?? String(err) });
+    }
+}
+
+// Puts the Live preset back in working order now (see "Self-repair"
+// above) - for the drawer's Repair button. Resolves to getLiveHealth().
+export async function repairLiveExtraction() {
+    try {
+        await ensureLivePreset();
+    } catch (err) {
+        console.warn(LOG_PREFIX, 'could not repair the Live preset', err);
+        setHealth({ state: 'error', error: err?.message ?? String(err) });
+        return getLiveHealth();
+    }
+    await syncAndRecord();
+    return getLiveHealth();
+}
+
+// The drawer's "Enable Archivist" switch: saves it and (de)activates the
+// Live preset for the open chat. Resolves to getLiveHealth().
+export async function setArchivistEnabled(enabled) {
+    getSettings().enabled = enabled === true;
+    saveSettings();
+    await syncAndRecord();
+    return getLiveHealth();
+}
+
+// Starts following State Engine's updates, then sets up the Live preset.
+// Call once, after the memory core has loaded the open chat. The listeners
+// go in first, so a setup failure here can be fixed later with
+// repairLiveExtraction() without a reload. Never throws.
 export async function startLiveExtraction() {
-    await ensureLivePreset();
     const { eventSource, eventTypes } = SillyTavern.getContext();
     eventSource.on(VARIABLES_CHANGED_EVENT, (chatId) => {
         if (getSettings().enabled) void harvest(chatId);
     });
-    eventSource.on(eventTypes.CHAT_CHANGED, () => void syncLivePreset().catch((err) => console.warn(LOG_PREFIX, 'could not update the Live preset for this chat', err)));
-    await syncLivePreset();
+    eventSource.on(eventTypes.CHAT_CHANGED, () => void syncAndRecord());
+    await repairLiveExtraction();
 }
