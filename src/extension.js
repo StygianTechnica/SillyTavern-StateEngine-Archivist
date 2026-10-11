@@ -1,37 +1,19 @@
-// Extension bootstrap: confirms the State Engine dependency is actually
-// present, then claims a namespace, registers this extension for
-// discovery, and declares its capabilities - the things every State
-// Engine extension must do before it can create presets, variables, or
-// anything else. Nothing else belongs here: no presets, no variables,
-// no events, no UI beyond the one missing-dependency popup. See
-// docs/how-to-extend.md for where everything else actually goes once
-// you start building.
+// Archivist bootstrap: confirms the State Engine dependency is actually
+// present, then claims Archivist's namespace, registers it for discovery,
+// and declares its capabilities - the things every State Engine extension
+// must do before it can create presets, variables, or anything else.
+// Everything Archivist itself does (memory storage, extraction, the
+// drawer) is started from here once that has succeeded.
 
 import { ensureStateEngineAvailable, warnStateEngineMissing } from './api/dependency-check.js';
 import { claimNamespace } from './api/namespace.js';
 import { registerWithStateEngine } from './api/registration.js';
 import { declareCapabilities } from './api/capabilities.js';
+import { EXTENSION_ID, NAMESPACE, LOG_PREFIX } from './constants.js';
 
-// ---------------------------------------------------------------------
-// EXTENSION IDENTITY - rename these before building on this template.
-// See docs/README.md, "Renaming the namespace".
-// ---------------------------------------------------------------------
-
-// Must be unique across every extension that talks to the State Engine
-// API on this SillyTavern install - it is how the State Engine tells
-// your extension's calls apart from anyone else's. Convention: match
-// your extension's own folder/repo name.
-const EXTENSION_ID = 'myExtension';
-
-// Prefixes every variable and preset your extension creates through the
-// State Engine (e.g. a variable named "mood" is stored as
-// "myExtension__mood"). Letters and digits only, starting with a
-// letter - see the State Engine API Reference, "Namespace Model".
-const NAMESPACE = 'myExtension';
-
-// Plain strings describing what your extension provides, e.g.
-// "ui.panel" or "data.inventory" - leave empty until you actually
-// provide something another extension might want to depend on.
+// Plain strings describing what Archivist provides to other extensions.
+// Empty until the query APIs exist - see docs/architecture.md,
+// "Capabilities".
 const CAPABILITIES = [];
 
 // Called once, on load (see src/index.js). Safe to call again on a
@@ -48,7 +30,7 @@ export async function initExtension() {
     const available = await ensureStateEngineAvailable();
     if (!available) {
         warnStateEngineMissing();
-        console.warn(`[${EXTENSION_ID}] State Engine was not found (not installed, not enabled, or not ready) - initialization aborted.`);
+        console.warn(`${LOG_PREFIX} State Engine was not found (not installed, not enabled, or not ready) - initialization aborted.`);
         return;
     }
 
@@ -58,18 +40,18 @@ export async function initExtension() {
         await registerWithStateEngine(EXTENSION_ID, {
             namespace: NAMESPACE,
             capabilities: CAPABILITIES,
-            description: '',
+            description: 'Stores and indexes the memory records State Engine extracts from each chat, and serves them to other extensions.',
         });
 
         await declareCapabilities(EXTENSION_ID, CAPABILITIES);
 
-        console.log(`[${EXTENSION_ID}] initialized - namespace "${NAMESPACE}" claimed.`);
+        console.log(`${LOG_PREFIX} initialized - namespace "${NAMESPACE}" claimed.`);
     } catch (err) {
         // State Engine looked present (the check above passed) but an
         // actual call still failed - "its API cannot be reached", the
         // one failure mode ensureStateEngineAvailable() can't catch in
         // advance. Same warning, never thrown further.
         warnStateEngineMissing();
-        console.warn(`[${EXTENSION_ID}] State Engine calls failed unexpectedly - initialization aborted.`, err);
+        console.warn(`${LOG_PREFIX} State Engine calls failed unexpectedly - initialization aborted.`, err);
     }
 }

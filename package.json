@@ -1,8 +1,8 @@
 {
-    "name": "sillytavern-state-engine-extension-template",
+    "name": "sillytavern-state-engine-archivist",
     "version": "0.1.0",
     "private": true,
     "type": "module",
-    "description": "Blank template for building a SillyTavern extension that integrates with the State Engine API.",
+    "description": "Memory storage, indexing and query for SillyTavern chats, built on the State Engine API.",
     "license": "SEE LICENSE IN LICENSE"
 }
