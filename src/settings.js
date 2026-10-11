@@ -17,7 +17,7 @@ const DEFAULTS = {
     connectionProfileId: '',
     // Chat registry: { [chatKey]: entry } - see src/memory/registry.js.
     chats: {},
-    // Which version of the Live preset's extraction variable is installed
+    // Which version of the live preset's extraction variable is installed
     // (src/extraction/live.js, LIVE_VARIABLE_VERSION). null = none yet.
     liveVariableVersion: null,
 };

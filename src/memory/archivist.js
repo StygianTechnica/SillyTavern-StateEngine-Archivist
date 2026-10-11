@@ -7,6 +7,10 @@
 // - addMemoryRecords()  appends records to a chat's file and, when that
 //                       chat is open, rebuilds the indexes. Live extraction
 //                       and catch-up both store through this.
+// - deleteMemoryRecords() / deleteChatMemories()  the user's own deletions,
+//                       from the memory browser (src/ui/memory-browser.js) -
+//                       the only way a stored memory is ever removed.
+// - moveChatMemories()  follows a renamed chat (src/memory/chat-lifecycle.js).
 //
 // Indexes exist only for the open chat. getMemoriesForEntity() and
 // getMemoriesBySubtype() therefore answer for the open chat, synchronously;
@@ -18,8 +22,10 @@
 import { LOG_PREFIX } from '../constants.js';
 import { createMemoryRecord, isMemoryRecord } from './schema.js';
 import { buildIndexes } from './indexes.js';
-import { readMemoryFileQueued, updateMemoryFile } from './storage.js';
-import { getCurrentChatRef, chatKeyFor, getChatEntry, ensureChatEntry, findChatEntriesById, updateChatEntry } from './registry.js';
+import { readMemoryFileQueued, updateMemoryFile, deleteMemoryFile } from './storage.js';
+import {
+    getCurrentChatRef, chatKeyFor, getChatEntry, ensureChatEntry, findChatEntriesById, updateChatEntry, removeChatEntry, moveChatEntry,
+} from './registry.js';
 
 // Emitted on SillyTavern's event bus after a chat's stored memory changes,
 // with { chatId, chatKey }. Re-read through the query APIs on receipt.
@@ -134,4 +140,58 @@ export async function getAllMemories(chatId) {
         console.warn(LOG_PREFIX, `could not read memories for chat "${chatId}"`, err);
         return [];
     }
+}
+
+// Deletes the records with these ids from a chat (by registry chat key).
+// Resolves to how many were removed. Throws if the file could not be
+// read or written - nothing is removed then.
+export async function deleteMemoryRecords(chatKey, ids) {
+    const entry = getChatEntry(chatKey);
+    const doomed = new Set(Array.isArray(ids) ? ids : []);
+    if (!entry || doomed.size === 0) return 0;
+
+    let removed = 0;
+    const stored = await updateMemoryFile(entry.fileName, (existing) => existing.filter((record) => {
+        const drop = doomed.has(record?.id);
+        if (drop) removed++;
+        return !drop;
+    }));
+    updateChatEntry(chatKey, { recordCount: stored.filter(isMemoryRecord).length, updatedAt: new Date().toISOString() });
+    if (chatKey === state.chatKey) setRecords(stored);
+    emitChanged(chatKey, entry.chatId);
+    return removed;
+}
+
+// Deletes everything stored for a chat: its file and its registry entry.
+// Resolves to true, or false when the chat has nothing stored. Throws if
+// the file could not be deleted - the entry is kept then.
+export async function deleteChatMemories(chatKey) {
+    const entry = getChatEntry(chatKey);
+    if (!entry) return false;
+    await deleteMemoryFile(entry.fileName);
+    removeChatEntry(chatKey);
+    if (chatKey === state.chatKey) setRecords([]);
+    emitChanged(chatKey, entry.chatId);
+    return true;
+}
+
+// Moves a chat's memories to its new identity after a rename: the registry
+// entry, and chat_id in every record. `newRef` is the renamed chat (see
+// getCurrentChatRef() for its shape). Resolves to true when moved; false
+// when nothing was stored under `oldKey` or the new name already has
+// memories of its own (both are then left as they are).
+export async function moveChatMemories(oldKey, newRef) {
+    const entry = getChatEntry(oldKey);
+    const newKey = chatKeyFor(newRef);
+    if (!entry || newKey === oldKey) return false;
+    if (getChatEntry(newKey)) {
+        console.warn(LOG_PREFIX, `chat renamed to "${newRef.chatId}", which already has memories - the old memories stay under "${entry.chatId}"`);
+        return false;
+    }
+
+    await updateMemoryFile(entry.fileName, (existing) => existing.map((record) => (isMemoryRecord(record) ? { ...record, chat_id: newRef.chatId } : record)));
+    moveChatEntry(oldKey, newKey, { chatId: newRef.chatId, displayName: newRef.displayName || entry.displayName });
+    if (state.chatKey === newKey || state.chatKey === oldKey) await loadCurrentChat();
+    emitChanged(newKey, newRef.chatId);
+    return true;
 }

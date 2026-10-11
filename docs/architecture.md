@@ -1,13 +1,160 @@
 # Architecture
 
-Archivist starts from the State Engine extension template's scaffold:
-files under `src/api/` that each wrap exactly one State Engine API call,
-plus one that checks the dependency is actually there before any of them
-run; `src/extension.js`, which ties them together in the right order;
-`src/constants.js`, which holds Archivist's identity (`EXTENSION_ID`,
-`NAMESPACE`); and `src/index.js`, which starts it all when SillyTavern
-loads the page. This document explains what those calls do and why
-they're needed.
+How Archivist is put together. The first half is Archivist's own design -
+storage, indexes, extraction, the UI. The second half ("Reaching the State
+Engine API" onwards) is the State Engine integration it inherits from the
+extension template: the dependency check, namespace, registration and
+capabilities every State Engine extension sets up first.
+
+## Module map
+
+```
+src/index.js                  entry point (manifest "js"); calls initExtension()
+src/extension.js              startup order - see "Extension lifecycle"
+src/constants.js              EXTENSION_ID, NAMESPACE ("archivist"), LOG_PREFIX
+src/settings.js               extensionSettings.archivist: switches + the chat registry
+
+src/memory/                   the memory core - no State Engine calls
+  schema.js                   the Memory Record (spec section 2): build, validate, normalize
+  storage.js                  memories.json files: read, queued read-modify-write, delete
+  registry.js                 chat registry: which chat owns which file
+  indexes.js                  memoryByEntity / memoryBySubtype (spec section 4)
+  archivist.js                open chat's records + indexes; add, delete, move; the 3 query APIs
+  chat-lifecycle.js           follows renamed chats; keeps deleted chats' memory
+  chat-existence.js           which registered chats still exist (for the browser)
+
+src/extraction/               State Engine produces memories; Archivist stores them
+  memory-variable.js          the prompted record-list variable and its instructions
+  converter.js                model output -> memory record fields (entity names -> ids)
+  messages.js                 source_message_id for a chat message
+  live.js                     the live preset, harvesting, enable switch, self-repair
+
+src/ui/                       the drawer, the memory browser, confirmations
+src/public-api.js             what other extensions use (docs/api.md)
+src/api/                      thin State Engine wrappers (see "Reaching the State Engine API")
+```
+
+## Memory storage
+
+The spec asks for `/data/chats/<chat_id>/memories.json`. A browser extension
+can't write there, so each chat's "memories.json" is a real file in the
+user's data folder, written through SillyTavern's own file API
+(`src/memory/storage.js` is the only code that touches it):
+
+| Operation | Request                                                          |
+|-----------|------------------------------------------------------------------|
+| write     | `POST /api/files/upload { name, data: base64 }` -> `user/files/<name>` |
+| read      | `GET /user/files/<name>` (no cache)                              |
+| delete    | `POST /api/files/delete { path: "user/files/<name>" }`           |
+
+Each file is a JSON array of memory records. Safety rules:
+
+- **One change per file at a time.** Every read-modify-write goes through
+  `updateMemoryFile()`, which queues changes per file and runs them in call
+  order - two writers appending at once (live extraction and, later,
+  catch-up) both keep their records.
+- **A damaged file is never overwritten.** If a file exists but isn't a
+  JSON array, the update fails and the file is left alone.
+- Archivist is the only writer (spec section 3). Records are only ever
+  appended, except when the user deletes them in the memory browser.
+
+## The chat registry
+
+A SillyTavern chat id is only the chat's file name, and two characters can
+each have a chat with the same name. So Archivist identifies a chat by a
+**chat key** - the owner plus the chat id, the same distinction State
+Engine's own chat state records:
+
+```
+char:<character avatar>:<chat id>    a solo chat
+group:<group id>:<chat id>           a group chat
+```
+
+`settings.chats[chatKey]` holds `{ chatId, characterAvatar, groupId,
+displayName, fileName, recordCount, updatedAt }`. It is what lets the memory
+browser list chats that are not open - or no longer exist - and what maps a
+chat to its file. The file name is `archivist-memories-<slug>-<hash>.json`
+(SillyTavern accepts only `[a-zA-Z0-9_.-]`); the registry, not the name, is
+the source of truth.
+
+## Indexes and the query APIs
+
+`src/memory/archivist.js` keeps the **open chat's** records in memory and
+builds both indexes from them (`buildIndexes()`, always in full): at
+startup, on every chat change, after records are added, after the user
+deletes some. `getMemoriesForEntity()` and `getMemoriesBySubtype()` read the
+indexes, so they are synchronous and answer for the open chat;
+`getAllMemories(chatId)` can read any chat's file, so it is async. All three
+hand out copies. See [api.md](api.md).
+
+## Live extraction
+
+`src/extraction/live.js`. Archivist owns a regular State Engine preset,
+**Archivist Recent Memory Collection** (`triggers: ['ai']`, hidden from the
+tracker), with one variable, `archivist__memories`: a prompted list of
+records (`itemType: 'record'`). While Archivist is enabled the preset is
+active for the open chat, so State Engine fills the variable during its
+ordinary per-message update - no extra model call.
+
+1. State Engine writes the model's answer and emits
+   `state_engine_variables_changed`.
+2. `harvest()` reads the variable and **clears it at once** (so an
+   overlapping event finds nothing to store twice), converts the items
+   (`converter.js`) and stores them with `addMemoryRecords()`, attributed
+   to the newest AI message. If storing fails, the items are kept and
+   retried with the next harvest.
+3. The indexes are rebuilt and `archivist_memories_changed` is emitted.
+
+Two details of the variable (`memory-variable.js`):
+
+- State Engine describes a record list to the model only as "array of
+  record", so the item shape is spelled out in the instructions.
+- Its `itemSchema` requires only `text`. State Engine drops an item missing
+  any schema field; Archivist's converter defaults or fixes the rest, so a
+  memory isn't lost because the model left out its importance.
+
+Entity names in an item are looked up with State Engine's
+`getObjectByAlias` across every object type; a name that matches nothing is
+left out - Archivist never creates objects.
+
+The variable is only rewritten when `LIVE_VARIABLE_VERSION` goes up, so a
+user's own edits to its instructions survive reloads.
+
+### Self-repair
+
+The user can deactivate or delete Archivist's preset in State Engine's
+manager - State Engine warns while Archivist runs, but allows it. While
+Archivist is enabled, each chat change recreates whatever is missing and
+re-activates the preset; the drawer's **Repair** does the same at once.
+Event listeners are registered before the preset is set up, so a failure
+at startup can be repaired without a reload. Stored memory is never at
+risk: it lives in Archivist's files, not in State Engine variables.
+
+## Renamed and deleted chats
+
+`src/memory/chat-lifecycle.js` follows SillyTavern's events:
+
+- `CHAT_RENAMED` (`{ avatarId, groupId, oldFileName, newFileName }`, names
+  with `.jsonl`): `moveChatMemories()` moves the registry entry to the new
+  chat key and rewrites `chat_id` in the records; the file keeps its name.
+  If the new name already has memories of its own, nothing moves.
+- `CHAT_DELETED` / `GROUP_CHAT_DELETED`: nothing is deleted - a notice says
+  the memories were kept. The memory browser marks the chat missing
+  (`chat-existence.js`: the character or group is gone, or
+  `POST /api/characters/chats` / `group.chats` no longer lists it), and the
+  user decides.
+
+## The UI
+
+- **Drawer** (`settings.html`, `src/ui/settings-drawer.js`) - the enable
+  switch, status, Repair, the open chat's newest memories.
+- **Memory browser** (`src/ui/memory-browser.js`) - all chats, search,
+  filters, deletion. Deleting there (`deleteMemoryRecords()`,
+  `deleteChatMemories()`) is the only way a stored memory is ever removed.
+
+What each shows is computed by plain functions (`drawer-model.js`,
+`memory-browser-model.js`); memory text always goes on the page as text,
+never markup. Confirmations use SillyTavern's own popup (`confirm.js`).
 
 ## Reaching the State Engine API
 
@@ -57,6 +204,12 @@ trade-off doesn't suit your extension once it grows, factoring the two
 constants into their own small module is a reasonable, purely
 structural change - it wouldn't alter any behavior described here.
 
+Archivist does exactly that for everything it added: the template's three
+wrappers keep their own paths, but `src/api/presets.js`, `variables.js` and
+`objects.js` all load State Engine through one shared module,
+`src/api/state-engine.js` - so an install with a differently named State
+Engine folder needs those four files' paths adjusted.
+
 ## Extension lifecycle
 
 1. **SillyTavern loads `manifest.json`**, reads `js` (`"src/index.js"`),
@@ -79,7 +232,14 @@ structural change - it wouldn't alter any behavior described here.
    - `claimNamespace()` - see "Namespaces", below.
    - `registerWithStateEngine()` - see "Registration", below.
    - `declareCapabilities()` - see "Capabilities", below.
-5. **Every later page load repeats steps 3-4.** There is no "first run
+5. **Then Archivist's own startup**, each step logged rather than shown as
+   the missing-dependency popup if it fails:
+   - the memory core: settings, chat-change and chat-lifecycle listeners,
+     the open chat's memory, `window.StateEngineArchivist`;
+   - live extraction: its listeners, then its preset (a failure here shows
+     in the drawer, with Repair);
+   - the drawer.
+6. **Every later page load repeats steps 3-5.** There is no "first run
    only" special case anywhere in Archivist - `createNamespace()` is
    idempotent for the same extension re-claiming the same namespace, and
    `registerExtension()`/`declareCapabilities()` simply replace the

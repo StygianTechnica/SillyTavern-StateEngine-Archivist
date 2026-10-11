@@ -11,6 +11,7 @@ import { getAllMemories, MEMORIES_CHANGED_EVENT } from '../memory/archivist.js';
 import { getCurrentChatRef } from '../memory/registry.js';
 import { getLiveHealth, onLiveHealthChange, repairLiveExtraction, setArchivistEnabled } from '../extraction/live.js';
 import { statusLine, chatSummary, recentMemories, memoryView } from './drawer-model.js';
+import { openMemoryBrowser } from './memory-browser.js';
 
 // SillyTavern resolves extension templates relative to
 // public/scripts/extensions/, i.e. "third-party/<folder name>". Derived
@@ -108,6 +109,8 @@ export async function addSettingsDrawer() {
             renderStatus();
         }
     });
+
+    byId('ar_open_browser').addEventListener('click', () => void openMemoryBrowser());
 
     onLiveHealthChange(renderStatus);
     const { eventSource, eventTypes } = SillyTavern.getContext();

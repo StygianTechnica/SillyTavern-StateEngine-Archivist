@@ -76,7 +76,7 @@ describe('the Archivist drawer', () => {
         const create = fake.stateEngine.createPreset;
         fake.stateEngine.createPreset = () => null;
         await openDrawer();
-        expect($('ar_status').textContent).toMatch(/^Not working: could not create the Live preset/);
+        expect($('ar_status').textContent).toMatch(/^Not working: could not create the Archivist Recent Memory Collection preset/);
         expect($('ar_status').classList.contains('ar-status-error')).toBe(true);
 
         fake.stateEngine.createPreset = create;
@@ -104,6 +104,13 @@ describe('the Archivist drawer', () => {
         await addMemoryRecords(getCurrentChatRef(), [item('<img src=x onerror=alert(1)>')]);
         await waitFor(() => expect(document.querySelector('#ar_recent .ar-memory-text').textContent).toBe('<img src=x onerror=alert(1)>'));
         expect(document.querySelector('#ar_recent img')).toBeNull();
+    });
+
+    it('Review memories opens the memory browser', async () => {
+        await openDrawer();
+        $('ar_open_browser').click();
+        await waitFor(() => expect(document.querySelector('.ar-mb-overlay')?.hidden).toBe(false));
+        document.querySelector('[data-mb="close"]').click();
     });
 
     it('follows chat changes', async () => {

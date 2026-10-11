@@ -15,6 +15,7 @@ import { loadCurrentChat } from './memory/archivist.js';
 import { exposeArchivistApi } from './public-api.js';
 import { startLiveExtraction } from './extraction/live.js';
 import { addSettingsDrawer } from './ui/settings-drawer.js';
+import { startChatLifecycle } from './memory/chat-lifecycle.js';
 
 // What Archivist provides to other extensions (see docs/architecture.md,
 // "Capabilities"): memory.store - it stores State Engine's extracted
@@ -27,6 +28,7 @@ async function startMemoryCore() {
     getSettings();
     const { eventSource, eventTypes } = SillyTavern.getContext();
     eventSource.on(eventTypes.CHAT_CHANGED, () => void loadCurrentChat());
+    startChatLifecycle();
     await loadCurrentChat();
     exposeArchivistApi();
 }

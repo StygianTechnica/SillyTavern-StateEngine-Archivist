@@ -51,6 +51,24 @@ describe('ensureLivePreset', () => {
         expect(getSettings().liveVariableVersion).toBe(LIVE_VARIABLE_VERSION);
     });
 
+    it('is named "Archivist Recent Memory Collection"', () => {
+        expect(LIVE_PRESET).toBe('Archivist Recent Memory Collection');
+    });
+
+    it('renames a preset still called "Live" in place, keeping its activations and edits', async () => {
+        fake.stateEngine.createPreset('x', 'i', { namespace: 'archivist', name: 'Live', triggers: ['ai'] });
+        fake.stateEngine.createVariable('x', 'i', { namespace: 'archivist', presetName: 'Live', name: 'memories', type: 'array', prompted: { instructions: 'my own wording' } });
+        fake.stateEngine.activatePreset('x', 'i', 'Chat A', 'archivist', 'Live');
+        getSettings().liveVariableVersion = LIVE_VARIABLE_VERSION;
+
+        await ensureLivePreset();
+
+        expect(fake.presets.has('archivist.Live')).toBe(false);
+        expect(fake.presets.get(`archivist.${LIVE_PRESET}`).variables.get(VAR).prompted.instructions).toBe('my own wording');
+        expect(fake.isActive('Chat A', LIVE_PRESET)).toBe(true);
+        expect(fake.calls.filter((c) => c.name === 'createPreset')).toHaveLength(1);
+    });
+
     it('throws when State Engine refuses the preset', async () => {
         fake.stateEngine.createPreset = () => null;
         await expect(ensureLivePreset()).rejects.toThrow('could not create');

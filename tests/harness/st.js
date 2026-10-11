@@ -4,6 +4,9 @@
 
 export const files = new Map();
 export const requests = [];
+// Each character's chat files on the "server" (avatar -> chat ids), for
+// POST /api/characters/chats. A character not listed has no chats folder.
+export const characterChats = new Map();
 
 let context;
 
@@ -17,6 +20,7 @@ export const eventSource = {
 // the character Alice (avatar alice.png).
 export function resetSillyTavern(overrides = {}) {
     files.clear();
+    characterChats.clear();
     requests.length = 0;
     listeners.clear();
     eventSource.emit.mockClear();
@@ -68,6 +72,11 @@ export async function fakeFetch(url, options = {}) {
         if (!/^[a-zA-Z0-9_\-.]+$/.test(body.name)) return new Response('Illegal character in filename', { status: 400 });
         files.set(body.name, decodeBase64(body.data));
         return Response.json({ path: `user/files/${body.name}` });
+    }
+    if (method === 'POST' && url === '/api/characters/chats') {
+        const ids = characterChats.get(body.avatar_url);
+        if (!ids) return Response.json({ error: true });
+        return Response.json(ids.map((id) => ({ file_name: `${id}.jsonl`, file_id: id })));
     }
     if (method === 'POST' && url === '/api/files/delete') {
         const name = body.path.replace(/^user\/files\//, '');

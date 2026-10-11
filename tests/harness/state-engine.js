@@ -35,8 +35,16 @@ export function createFakeStateEngine() {
             return { id: `p_${def.name}`, ...created };
         },
         updatePreset(extensionId, instanceId, namespace, name, patch) {
+            log('updatePreset', [namespace, name, patch]);
             const p = preset(namespace, name);
             if (!p) return null;
+            if (patch.name && patch.name !== name) {
+                if (preset(namespace, patch.name)) return null;
+                presets.delete(`${namespace}.${name}`);
+                presets.set(`${namespace}.${patch.name}`, p);
+                // Chat activations follow the preset (State Engine keys them by preset id).
+                for (const names of active.values()) if (names.delete(name)) names.add(patch.name);
+            }
             Object.assign(p, patch);
             return p;
         },
@@ -86,6 +94,10 @@ export function createFakeStateEngine() {
         },
         listObjectTypes() {
             return OBJECT_TYPES.map((id) => ({ id }));
+        },
+        getObject(extensionId, instanceId, chatId, id) {
+            const found = objects.find((o) => o.id === id);
+            return found ? { id: found.id, type: found.type, name: found.names[0], aliases: found.names.slice(1) } : null;
         },
         getObjectByAlias(extensionId, instanceId, chatId, type, name) {
             const wanted = name.toLowerCase();

@@ -115,3 +115,16 @@ export function removeChatEntry(chatKey) {
     saveSettings();
     return true;
 }
+
+// Moves an entry to a new chat key (a renamed chat), applying `patch`.
+// Refuses (false) when there is no entry under `fromKey` or one already
+// exists under `toKey`. The file keeps its name - the registry, not the
+// name, says which file belongs to which chat.
+export function moveChatEntry(fromKey, toKey, patch = {}) {
+    const chats = getSettings().chats;
+    if (!chats[fromKey] || chats[toKey]) return false;
+    chats[toKey] = { ...chats[fromKey], ...patch };
+    delete chats[fromKey];
+    saveSettings();
+    return true;
+}

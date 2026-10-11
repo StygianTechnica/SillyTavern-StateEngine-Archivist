@@ -18,3 +18,9 @@ export async function getObjectByAlias(chatId, type, name) {
     const { stateEngine, instanceId } = await getStateEngine();
     return stateEngine.getObjectByAlias(EXTENSION_ID, instanceId, chatId, type, name) ?? null;
 }
+
+// One object by id, as seen from a chat (its own or its setting's), or null.
+export async function getObject(chatId, id) {
+    const { stateEngine, instanceId } = await getStateEngine();
+    return stateEngine.getObject(EXTENSION_ID, instanceId, chatId, id) ?? null;
+}

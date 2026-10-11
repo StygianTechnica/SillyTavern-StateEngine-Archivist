@@ -1,5 +1,11 @@
 # How to Extend This Template
 
+> Kept from the State Engine extension template Archivist was built from:
+> a reference for the State Engine calls an extension makes (presets,
+> variables, values, independent presets, events, roles, objects). For
+> Archivist itself see [README.md](README.md), [api.md](api.md) and
+> [architecture.md](architecture.md).
+
 Everything below assumes you've already renamed the namespace (see
 [README.md](README.md)) and confirmed the extension loads cleanly with
 just the console message and nothing else. Each section is additive -

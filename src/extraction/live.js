@@ -1,5 +1,6 @@
 // Live extraction: memories from each new AI message, at no extra LLM
-// cost. Archivist's regular "Live" preset holds the memory extraction
+// cost. Archivist's regular preset, "Archivist Recent Memory Collection"
+// (LIVE_PRESET), holds the memory extraction
 // variable (src/extraction/memory-variable.js) and is active for the open
 // chat while Archivist is enabled, so State Engine fills that variable in
 // during its ordinary per-message prompted update - the same call that
@@ -17,7 +18,7 @@
 // event arriving mid-store finds nothing to store twice; if storing then
 // fails, the items are kept and retried with the chat's next harvest.
 //
-// Self-repair: the user can deactivate or delete the Live preset (or its
+// Self-repair: the user can deactivate or delete the live preset (or its
 // variable) in State Engine's manager - State Engine warns them while
 // Archivist runs, but allows it. While Archivist is enabled,
 // syncLivePreset() puts back whatever is missing and re-activates the
@@ -28,7 +29,7 @@
 
 import { LOG_PREFIX } from '../constants.js';
 import { getSettings, saveSettings } from '../settings.js';
-import { findPreset, createPreset, activatePreset, deactivatePreset } from '../api/presets.js';
+import { findPreset, createPreset, updatePreset, activatePreset, deactivatePreset } from '../api/presets.js';
 import { getVariable, createVariable, updateVariable, getVariableValue, setVariableValue, VARIABLES_CHANGED_EVENT } from '../api/variables.js';
 import { listObjectTypeIds, getObjectByAlias } from '../api/objects.js';
 import { addMemoryRecords } from '../memory/archivist.js';
@@ -37,7 +38,11 @@ import { MEMORY_VARIABLE, memoryVariableDef } from './memory-variable.js';
 import { convertExtractedItems, createEntityResolver } from './converter.js';
 import { sourceMessageId, lastReplyIndex } from './messages.js';
 
-export const LIVE_PRESET = 'Live';
+export const LIVE_PRESET = 'Archivist Recent Memory Collection';
+
+// Earlier names of the same preset. One found under an old name is renamed
+// in place - keeping its chat activations, stored values and any edits.
+const OLD_LIVE_PRESET_NAMES = ['Live'];
 
 // Raised whenever memoryVariableDef('live') changes, so an existing
 // install's variable is brought up to date once - and otherwise left
@@ -46,11 +51,21 @@ export const LIVE_VARIABLE_VERSION = 1;
 
 const harvests = new Map(); // chatId -> { running, again, retry: items[] }
 
-// Creates the Live preset and its variable if missing, and updates the
-// variable when LIVE_VARIABLE_VERSION has moved on. Throws if State Engine
-// refuses either.
+// Renames the preset if it still has an old name. True if it did.
+async function renameOldLivePreset() {
+    for (const oldName of OLD_LIVE_PRESET_NAMES) {
+        if (!await findPreset(oldName)) continue;
+        if (!await updatePreset(oldName, { name: LIVE_PRESET })) throw new Error(`could not rename the ${oldName} preset to ${LIVE_PRESET}`);
+        return true;
+    }
+    return false;
+}
+
+// Creates the live preset and its variable if missing (renaming one with
+// an old name instead), and updates the variable when
+// LIVE_VARIABLE_VERSION has moved on. Throws if State Engine refuses.
 export async function ensureLivePreset() {
-    if (!await findPreset(LIVE_PRESET)) {
+    if (!await findPreset(LIVE_PRESET) && !await renameOldLivePreset()) {
         const created = await createPreset({
             name: LIVE_PRESET,
             description: 'Archivist: extracts memories from each new AI message, as part of the regular update.',
@@ -73,7 +88,7 @@ export async function ensureLivePreset() {
     }
 }
 
-// While Archivist is enabled: recreates the Live preset or its variable if
+// While Archivist is enabled: recreates the live preset or its variable if
 // they were deleted, and activates the preset for the open chat. While
 // disabled: deactivates it for the open chat.
 export async function syncLivePreset() {
@@ -168,18 +183,18 @@ async function syncAndRecord() {
         await syncLivePreset();
         setHealth({ state: getSettings().enabled ? 'ok' : 'off', error: null });
     } catch (err) {
-        console.warn(LOG_PREFIX, 'could not set up the Live preset', err);
+        console.warn(LOG_PREFIX, 'could not set up the live preset', err);
         setHealth({ state: 'error', error: err?.message ?? String(err) });
     }
 }
 
-// Puts the Live preset back in working order now (see "Self-repair"
+// Puts the live preset back in working order now (see "Self-repair"
 // above) - for the drawer's Repair button. Resolves to getLiveHealth().
 export async function repairLiveExtraction() {
     try {
         await ensureLivePreset();
     } catch (err) {
-        console.warn(LOG_PREFIX, 'could not repair the Live preset', err);
+        console.warn(LOG_PREFIX, 'could not repair the live preset', err);
         setHealth({ state: 'error', error: err?.message ?? String(err) });
         return getLiveHealth();
     }
@@ -196,7 +211,7 @@ export async function setArchivistEnabled(enabled) {
     return getLiveHealth();
 }
 
-// Starts following State Engine's updates, then sets up the Live preset.
+// Starts following State Engine's updates, then sets up the live preset.
 // Call once, after the memory core has loaded the open chat. The listeners
 // go in first, so a setup failure here can be fixed later with
 // repairLiveExtraction() without a reload. Never throws.
