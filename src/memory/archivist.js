@@ -135,9 +135,3 @@ export async function getAllMemories(chatId) {
         return [];
     }
 }
-
-// The open chat as Archivist identifies it, or null - for the extraction
-// modules, which store against the chat a message came from.
-export function getOpenChatRef() {
-    return state.ref ? { ...state.ref } : null;
-}

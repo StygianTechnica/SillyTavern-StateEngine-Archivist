@@ -1,7 +1,7 @@
 import { files, openChat, eventSource, failNext, getContext } from './harness/st.js';
 import {
     loadCurrentChat, addMemoryRecords, getMemoriesForEntity, getMemoriesBySubtype,
-    getAllMemories, getOpenChatRef, MEMORIES_CHANGED_EVENT,
+    getAllMemories, MEMORIES_CHANGED_EVENT,
 } from '../src/memory/archivist.js';
 import { getCurrentChatRef, getChatEntry } from '../src/memory/registry.js';
 
@@ -147,7 +147,6 @@ describe('loadCurrentChat', () => {
         await loadCurrentChat();
         expect(getMemoriesForEntity('chr_alice')).toHaveLength(1);
         expect(getMemoriesForEntity('chr_bob')).toEqual([]);
-        expect(getOpenChatRef()).toMatchObject({ chatId: 'Chat A', characterAvatar: 'alice.png' });
     });
 
     it('makes no request for a chat with no stored memory', async () => {
@@ -193,7 +192,6 @@ describe('loadCurrentChat', () => {
     it('handles no open chat', async () => {
         openChat({ chatId: undefined });
         await loadCurrentChat();
-        expect(getOpenChatRef()).toBeNull();
         expect(await getAllMemories()).toEqual([]);
         expect(getContext().extensionSettings.archivist.chats).toEqual({});
     });

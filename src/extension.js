@@ -13,6 +13,7 @@ import { EXTENSION_ID, NAMESPACE, LOG_PREFIX } from './constants.js';
 import { getSettings } from './settings.js';
 import { loadCurrentChat } from './memory/archivist.js';
 import { exposeArchivistApi } from './public-api.js';
+import { startLiveExtraction } from './extraction/live.js';
 
 // What Archivist provides to other extensions (see docs/architecture.md,
 // "Capabilities"): memory.store - it stores State Engine's extracted
@@ -71,10 +72,17 @@ export async function initExtension() {
 
     // Archivist's own startup - a failure here is Archivist's, not State
     // Engine's, so it is logged rather than shown as the missing-dependency
-    // popup.
+    // popup. Live extraction needs the memory core; stored memory stays
+    // readable even if extraction cannot start.
     try {
         await startMemoryCore();
     } catch (err) {
         console.error(`${LOG_PREFIX} memory core failed to start.`, err);
+        return;
+    }
+    try {
+        await startLiveExtraction();
+    } catch (err) {
+        console.error(`${LOG_PREFIX} live memory extraction failed to start.`, err);
     }
 }
