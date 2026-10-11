@@ -66,7 +66,13 @@ Archivist looks those names up among State Engine's objects; a name
 State Engine doesn't know is left out (Archivist never creates objects).
 
 You can edit the variable's instructions in State Engine's manager to tune
-what gets remembered - Archivist keeps your wording.
+what gets remembered - Archivist keeps your wording, except when an Archivist
+update improves the built-in instructions (it then replaces them once).
+
+**Give State Engine room to answer:** its max-tokens setting caps the whole
+update response, memories included. A few memories add 50-80 tokens each; a
+response cut off at the limit can't be read, and the whole update is lost.
+Around 800-1000 is a good setting.
 
 ### The memory browser
 
@@ -102,7 +108,8 @@ rest of your SillyTavern data.
 - **Status says *Not working*** - press **Repair**. If it keeps failing,
   the browser console lines starting with `[Archivist]` say why.
 - **Enabled, but no memories appear** - check that State Engine's prompted
-  updates run (its own variables change after a reply), and that
+  updates run (its own variables change after a reply), that its max tokens
+  isn't too low (see above), and that
   **Archivist Recent Memory Collection** is active for the chat in State
   Engine's manager. State Engine warns before you deactivate or delete it
   while Archivist runs; if you did anyway, Archivist switches it back on the

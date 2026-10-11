@@ -105,10 +105,16 @@ ordinary per-message update - no extra model call.
    retried with the next harvest.
 3. The indexes are rebuilt and `archivist_memories_changed` is emitted.
 
-Two details of the variable (`memory-variable.js`):
+Three details of the variable (`memory-variable.js`):
 
-- State Engine describes a record list to the model only as "array of
-  record", so the item shape is spelled out in the instructions.
+- It is **NEW EACH TURN** (State Engine's `prompted.newEachTurn`). Archivist
+  empties it after every run; shown with that empty current value under
+  State Engine's "repeat the current value if nothing changed" rule, the
+  model kept answering `[]`. NEW EACH TURN shows no current value and asks
+  for a fresh answer every turn.
+- The instructions spell out the item shape, and set a low bar for what
+  counts: small concrete details are stored as `low` importance rather than
+  skipped, and `[]` is only for a message where nothing happens.
 - Its `itemSchema` requires only `text`. State Engine drops an item missing
   any schema field; Archivist's converter defaults or fixes the rest, so a
   memory isn't lost because the model left out its importance.
@@ -118,7 +124,12 @@ Entity names in an item are looked up with State Engine's
 left out - Archivist never creates objects.
 
 The variable is only rewritten when `LIVE_VARIABLE_VERSION` goes up, so a
-user's own edits to its instructions survive reloads.
+user's own edits to its instructions survive reloads - until an Archivist
+update raises the version, which replaces them once.
+
+State Engine's own max-tokens setting caps the whole update response, memory
+included: a few memories add 50-80 tokens each, and a cut-off response loses
+the whole update, not just the memories. Around 800-1000 leaves room.
 
 ### Self-repair
 

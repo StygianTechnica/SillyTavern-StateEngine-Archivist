@@ -10,6 +10,17 @@
 // schema field, and Archivist's converter (src/extraction/converter.js)
 // fills in or fixes everything else - a memory should not be lost because
 // the model left out its importance.
+//
+// It is NEW EACH TURN (State Engine prompted.newEachTurn): Archivist empties
+// it after every run, so shown with its current value under State Engine's
+// "repeat the current value if nothing changed" rule, the model kept
+// answering that empty list. NEW EACH TURN shows no current value and asks
+// for a fresh answer every turn.
+//
+// What counts as a memory is set low on purpose: small models, given an easy
+// way out ("[] if nothing is worth remembering"), took it for almost every
+// message. Small concrete details are stored as "low" importance instead -
+// importance and the memory browser are how they are sorted out later.
 
 import { KNOWN_SUBTYPES } from '../memory/schema.js';
 
@@ -24,17 +35,23 @@ const ITEM_SHAPE = [
     '"entities": the names of the characters, places, factions, items, creatures and lore involved, exactly as the story names them}.',
 ].join(' ');
 
+// What to look for - shared by both modes.
+const WHAT_COUNTS = 'Record what happened or came to light: events (what someone did, decided or went through), facts (about a person, place or thing), relationship changes and secrets. '
+    + 'Include small concrete details too, as "low" importance - where someone went, what they bought, how they felt about it. Do not record pure description of the surroundings.';
+
 const LIVE_INSTRUCTIONS = [
-    'NEW memories from the most recent roleplay message only: events, facts, relationship changes and secrets worth remembering later in the story.',
+    'Memories from the most recent roleplay message only.',
+    WHAT_COUNTS,
     ITEM_SHAPE,
-    'Never repeat a memory from earlier messages. Answer [] when the most recent message adds nothing worth remembering.',
+    'Never repeat anything from earlier messages. Answer [] only when nothing at all happens in the most recent message.',
 ].join(' ');
 
 const CATCH_UP_INSTRUCTIONS = [
-    'Memories from the chat messages given: events, facts, relationship changes and secrets worth remembering later in the story.',
+    'Memories from the chat messages given.',
+    WHAT_COUNTS,
     ITEM_SHAPE,
     'Also give "message_index": the [#number] of the message the memory comes from.',
-    'Never repeat a memory listed under "Already remembered". Answer [] when the messages hold nothing worth remembering.',
+    'Never repeat a memory listed under "Already remembered". Answer [] only when nothing at all happens in the messages.',
 ].join(' ');
 
 // The variable definition (without namespace/presetName/name) for
@@ -50,6 +67,6 @@ export function memoryVariableDef(mode) {
         scope: 'chat',
         showInTracker: false,
         behaviors: { prompted: true, increment: false },
-        prompted: { instructions: mode === 'catch-up' ? CATCH_UP_INSTRUCTIONS : LIVE_INSTRUCTIONS },
+        prompted: { instructions: mode === 'catch-up' ? CATCH_UP_INSTRUCTIONS : LIVE_INSTRUCTIONS, newEachTurn: true },
     };
 }

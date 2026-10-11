@@ -98,6 +98,19 @@ describe('memoryVariableDef', () => {
         expect(def).not.toHaveProperty('value');
     });
 
+    it('is NEW EACH TURN in both modes, so the model never just repeats the emptied list', () => {
+        expect(memoryVariableDef('live').prompted.newEachTurn).toBe(true);
+        expect(memoryVariableDef('catch-up').prompted.newEachTurn).toBe(true);
+    });
+
+    it('asks for small concrete details as low importance, and [] only when nothing happens', () => {
+        for (const mode of ['live', 'catch-up']) {
+            const text = memoryVariableDef(mode).prompted.instructions;
+            expect(text).toContain('Include small concrete details too, as "low" importance');
+            expect(text).toContain('Answer [] only when nothing at all happens');
+        }
+    });
+
     it('asks catch-up runs for the source message index', () => {
         expect(memoryVariableDef('catch-up').prompted.instructions).toContain('message_index');
         expect(memoryVariableDef('live').prompted.instructions).not.toContain('message_index');

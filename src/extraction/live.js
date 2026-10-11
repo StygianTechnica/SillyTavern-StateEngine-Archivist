@@ -47,7 +47,8 @@ const OLD_LIVE_PRESET_NAMES = ['Live'];
 // Raised whenever memoryVariableDef('live') changes, so an existing
 // install's variable is brought up to date once - and otherwise left
 // alone, keeping any edits the user made in State Engine's manager.
-export const LIVE_VARIABLE_VERSION = 1;
+// 2: NEW EACH TURN, and a lower bar for what counts as a memory.
+export const LIVE_VARIABLE_VERSION = 2;
 
 const harvests = new Map(); // chatId -> { running, again, retry: items[] }
 
