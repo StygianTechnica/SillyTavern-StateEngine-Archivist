@@ -10,11 +10,24 @@ import { claimNamespace } from './api/namespace.js';
 import { registerWithStateEngine } from './api/registration.js';
 import { declareCapabilities } from './api/capabilities.js';
 import { EXTENSION_ID, NAMESPACE, LOG_PREFIX } from './constants.js';
+import { getSettings } from './settings.js';
+import { loadCurrentChat } from './memory/archivist.js';
+import { exposeArchivistApi } from './public-api.js';
 
-// Plain strings describing what Archivist provides to other extensions.
-// Empty until the query APIs exist - see docs/architecture.md,
-// "Capabilities".
-const CAPABILITIES = [];
+// What Archivist provides to other extensions (see docs/architecture.md,
+// "Capabilities"): memory.store - it stores State Engine's extracted
+// memory; memory.query - the query APIs in src/public-api.js.
+const CAPABILITIES = ['memory.store', 'memory.query'];
+
+// Starts the memory core: loads the open chat's memory and indexes, keeps
+// them in step with chat changes, and publishes the query API.
+async function startMemoryCore() {
+    getSettings();
+    const { eventSource, eventTypes } = SillyTavern.getContext();
+    eventSource.on(eventTypes.CHAT_CHANGED, () => void loadCurrentChat());
+    await loadCurrentChat();
+    exposeArchivistApi();
+}
 
 // Called once, on load (see src/index.js). Safe to call again on a
 // later page load - claimNamespace() is idempotent for the same
@@ -53,5 +66,15 @@ export async function initExtension() {
         // advance. Same warning, never thrown further.
         warnStateEngineMissing();
         console.warn(`${LOG_PREFIX} State Engine calls failed unexpectedly - initialization aborted.`, err);
+        return;
+    }
+
+    // Archivist's own startup - a failure here is Archivist's, not State
+    // Engine's, so it is logged rather than shown as the missing-dependency
+    // popup.
+    try {
+        await startMemoryCore();
+    } catch (err) {
+        console.error(`${LOG_PREFIX} memory core failed to start.`, err);
     }
 }

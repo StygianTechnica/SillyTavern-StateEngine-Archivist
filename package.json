@@ -4,5 +4,12 @@
     "private": true,
     "type": "module",
     "description": "Memory storage, indexing and query for SillyTavern chats, built on the State Engine API.",
-    "license": "SEE LICENSE IN LICENSE"
+    "license": "SEE LICENSE IN LICENSE",
+    "scripts": {
+        "test": "vitest",
+        "test:run": "vitest run"
+    },
+    "devDependencies": {
+        "vitest": "^4.1.11"
+    }
 }
