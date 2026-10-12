@@ -43,6 +43,7 @@ Archivist decides what is asked for, then stores what comes back.
 - **Enable Archivist** - off by default. While on, every AI reply's new
   memories are stored. Turning it off stores nothing new; what is already
   stored stays, and other extensions can still read it.
+- **Review memories** - right under it: opens the memory browser.
 - **Status** - *On*, *Off*, or *Not working: ...* with the reason.
 - **Last update** - what happened the last time State Engine sent memories:
   how many were stored, or why they couldn't be. Your first stop when
@@ -54,7 +55,6 @@ Archivist decides what is asked for, then stores what comes back.
 - **This chat** - how many memories the open chat has, and the newest
   five. Hover one for who it is about, the message it came from, and when
   it was stored.
-- **Review memories** - opens the memory browser.
 
 ### How memories are made
 
