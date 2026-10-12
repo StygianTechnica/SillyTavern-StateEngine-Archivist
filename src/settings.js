@@ -26,6 +26,21 @@ const DEFAULTS = {
     liveVariableVersion: null,
     // The same, for the catch-up preset (src/extraction/catch-up.js).
     catchUpVariableVersion: null,
+    // The compiler (src/compiler/): compile on its own, by the schedule
+    // (src/compiler/schedule.js) - while Archivist is enabled.
+    compileAuto: true,
+    // ...once this many new (not near-repeat) memories have arrived,
+    compileThreshold: 15,
+    // ...or this long after the last compile, with at least one new memory,
+    compileIntervalMinutes: 30,
+    // ...but never sooner than this after the last one.
+    compileMinGapMinutes: 5,
+    // The compiler's connection ('' = State Engine's) and answer size: the
+    // whole compiled list comes back each run.
+    compilerConnectionProfileId: '',
+    compilerMaxTokens: 3000,
+    // Which version of the compiler preset's variables is installed.
+    compilerVariableVersion: null,
 };
 
 // Returns the live settings object, creating it (and filling in any

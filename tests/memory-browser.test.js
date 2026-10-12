@@ -190,6 +190,40 @@ describe('the memory browser window', () => {
         expect(q('[data-chat-key="char:alice.png:Old Chat"]')).not.toBeNull();
     });
 
+    it('shows the compiled view with colour tags and links that jump to the chat', async () => {
+        fake.respond = async () => ({
+            archivist__compiled_facts: [
+                { text: 'Mira keeps secrets.', classification: 'PERMANENT', entities: ['Mira'], sources: ['m1'] },
+                { text: 'They are at the inn.', classification: 'SCENE', sources: ['m2'] },
+            ],
+            archivist__compiled_relationships: [{ from: 'Mira', to: 'Kael', type: 'distrusts', text: 'Mira distrusts Kael.', sources: ['m1'] }],
+        });
+        const { compileOpenChat } = await import('../src/compiler/compiler.js');
+        await compileOpenChat();
+        getContext().executeSlashCommandsWithOptions = vi.fn(async () => ({}));
+
+        await openMemoryBrowser({ view: 'compiled' });
+        // Two facts, one relationship, and the one event memory on the timeline.
+        await waitFor(() => expect(qa('.ar-mb-fact')).toHaveLength(4));
+        expect(qa('.ar-mb-timeline .ar-mb-record-text').map((n) => n.textContent)).toEqual(['They reached the inn.']);
+        const chips = qa('.ar-mb-chip').map((c) => c.textContent);
+        expect(chips).toEqual(['Permanent', 'Scene', 'Relationship']);
+        expect(q('.ar-mb-profile .ar-mb-owner-name').textContent).toBe('Mira');
+        const link = q('[data-mb-jump]');
+        expect(link.textContent).toBe('message #3');
+        link.click();
+        expect(getContext().executeSlashCommandsWithOptions).toHaveBeenCalledWith('/chat-jump 3');
+
+        q('[data-mb-view="memories"]').click();
+        expect(texts()).toHaveLength(2);
+    });
+
+    it('offers to compile a chat that never was', async () => {
+        await openMemoryBrowser({ view: 'compiled' });
+        await waitFor(() => expect(q('.ar-mb-records .ar-mb-empty').textContent).toMatch(/^Not compiled yet/));
+        expect(q('[data-mb="compileNow"]')).not.toBeNull();
+    });
+
     it('says so when nothing is stored at all', async () => {
         const { deleteChatMemories } = await import('../src/memory/archivist.js');
         await deleteChatMemories(ALICE);

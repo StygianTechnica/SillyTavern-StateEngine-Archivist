@@ -64,14 +64,16 @@ export async function readMemoryFile(fileName) {
     return data;
 }
 
-async function writeMemoryFile(fileName, records) {
+async function writeJson(fileName, data) {
     const response = await fetch('/api/files/upload', {
         method: 'POST',
         headers: requestHeaders(),
-        body: JSON.stringify({ name: fileName, data: toBase64(JSON.stringify(records, null, 2)) }),
+        body: JSON.stringify({ name: fileName, data: toBase64(JSON.stringify(data, null, 2)) }),
     });
     if (!response.ok) throw new Error(`Archivist: writing ${fileName} failed (${response.status})`);
 }
+
+const writeMemoryFile = writeJson;
 
 // Reads `fileName`, passes its records to `change`, and writes back what
 // `change` returns - all inside the file's lock. Resolves to the records
@@ -101,4 +103,28 @@ export function deleteMemoryFile(fileName) {
         });
         if (!response.ok && response.status !== 404) throw new Error(`Archivist: deleting ${fileName} failed (${response.status})`);
     });
+}
+
+// ---- other JSON files (the compiled memory, src/compiler/) - the same
+// per-file queue, for a file holding a JSON object rather than a list.
+
+// The object in `fileName`, or null when the file does not exist yet.
+// Throws when it exists but isn't a JSON object.
+async function readJson(fileName) {
+    const response = await fetch(`/${FILES_DIR}/${encodeURIComponent(fileName)}`, { cache: 'no-store' });
+    if (response.status === 404) return null;
+    if (!response.ok) throw new Error(`Archivist: reading ${fileName} failed (${response.status})`);
+    const data = await response.json();
+    if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error(`Archivist: ${fileName} does not hold a JSON object`);
+    return data;
+}
+
+// Reads `fileName` after any queued writes to it have finished.
+export function readJsonFile(fileName) {
+    return withFileLock(fileName, () => readJson(fileName));
+}
+
+// Replaces `fileName` with `data`, in the file's queue.
+export function writeJsonFile(fileName, data) {
+    return withFileLock(fileName, () => writeJson(fileName, data));
 }

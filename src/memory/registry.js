@@ -128,3 +128,9 @@ export function moveChatEntry(fromKey, toKey, patch = {}) {
     saveSettings();
     return true;
 }
+
+// The file holding a chat's compiled memory (src/compiler/), next to its
+// memories file - named after it, so it follows the entry through renames.
+export function compiledFileFor(entry) {
+    return entry.fileName.replace(/^archivist-memories-/, 'archivist-compiled-');
+}

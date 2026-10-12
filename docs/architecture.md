@@ -34,6 +34,12 @@ src/extraction/               State Engine produces memories; Archivist stores t
   catch-up-plan.js            which messages a catch-up pass reads, chunks, context text
   catch-up.js                 the catch-up preset and the background pass
 
+src/compiler/                 compiled memory: profiles, scene, session, relationships, timeline
+  compiled-schema.js          classifications and colour tags
+  compile-plan.js             run context, parsing the answer, the view (with message links)
+  schedule.js                 when to compile on its own
+  compiler.js                 the compiler preset, batched runs, storage, scheduling
+
 src/ui/                       the drawer, the memory browser, confirmations
 src/public-api.js             what other extensions use (docs/api.md)
 src/api/                      thin State Engine wrappers (see "Reaching the State Engine API")
@@ -218,6 +224,48 @@ memory has loaded; an empty chat array while memories exist is treated as
 
 The catch-up preset's runs - a pass's chunks and an edit's re-extraction -
 go through one queue, as they share the preset's context.
+
+## The compiler
+
+`src/compiler/`. Raw memories -> structured, deduplicated knowledge,
+through an **independent** State Engine preset, **Archivist Memory
+Compiler**, with its own connection, max tokens and header. Its answer comes
+back in two NEW EACH TURN record lists, `archivist__compiled_facts` and
+`archivist__compiled_relationships`, read and cleared after each run.
+
+| Code (deterministic)                            | The model (a compile run)                         |
+|-------------------------------------------------|---------------------------------------------------|
+| grouping by entity / classification             | merging similar facts, canonical statements      |
+| the timeline (event memories, message order)    | themes, classification of merged facts           |
+| colour tags                                     | relationships and their type                     |
+| scheduling (`schedule.js`)                      | contradictions                                   |
+
+**Incremental.** A compiled state - `{ facts, relationships, included:
+[memory ids], compiledAt }`, one JSON file per chat
+(`archivist-compiled-...json`, next to the memories) - is updated by handing
+the model the current facts (`[f3] PERMANENT · employment · about Lucian:
+...`) and relationships plus only the memories not `included` yet (`[m1]`,
+local refs), in batches of 60, and taking back the complete updated lists.
+`parseCompileOutput()` keeps a continued fact's id and earlier sources, maps
+refs back to memory ids, resolves entity names to State Engine object ids,
+and refuses an answer that would drop every fact (the previous state is
+kept). Rebuild starts from an empty state. The state is saved after every
+batch.
+
+**The view** (`buildCompiledView()`, what `getCompiledMemory()` returns) is
+built against the chat's memories as they are now: facts resting only on
+gone memories (deleted, another swipe) drop out, contradictions are red on
+both sides, and every fact and relationship carries its message links -
+`source_messages` and `message_range`, from its source memories'
+`source_message_id`s, whose indexes message-sync keeps current.
+
+**Scheduling** (`maybeCompile()`, after memory changes - debounced - and
+every minute): only while Archivist is enabled and *Compile automatically*
+is on; never with no new memories; never within `compileMinGapMinutes` of
+the last compile; at `compileThreshold` new memories (near-repeats - 80%
+word overlap - don't count), or after `compileIntervalMinutes` with at least
+one. Removed memories don't trigger a compile: the view already accounts for
+them.
 
 ## Renamed and deleted chats
 

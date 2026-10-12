@@ -105,10 +105,54 @@ Catch-up uses its own State Engine preset, **Archivist History Catch-Up**
 (an independent preset - it doesn't take part in the per-message update).
 It works whether or not *Enable Archivist* is on.
 
+### The compiler: profiles, scene, session, relationships, timeline
+
+Raw memories pile up and repeat themselves. The compiler turns a chat's
+memories into structured knowledge:
+
+- **Character profiles** - lasting facts, by character (and place, faction...)
+- **Scene** - what holds in the immediate scene: arrivals, weather, transport
+- **Session** - what holds for this part of the story
+- **Relationships** - who trains, employs, distrusts whom
+- **Timeline** - the story's events, in order
+
+Memories saying the same thing are merged into one canonical fact ("Lucian
+works at Maple Heights gym", not five memories about shifts there), and facts
+that can't both be true are flagged. Every fact has a colour tag -
+**Permanent** (blue), **Session** (yellow), **Scene** (green),
+**Relationship** (purple), **Contradiction** (red) - and links back to the
+chat messages it came from.
+
+It doesn't run on every message. In the drawer's **Compiler** section:
+
+- **Compile automatically** - on, it compiles once enough new memories have
+  arrived (**After new memories**, default 15 - near-repeats don't count), or
+  after a while with some (**Or every**, default 30 minutes), but never right
+  after the last compile (**Not within**, default 5 minutes). Only while
+  Archivist is enabled.
+- **Connection** and **Max tokens** - its own model, like catch-up's. The
+  whole compiled list comes back each time, so give it room (default 3000).
+- **Compile now** - compile the new memories now. **Rebuild** - start over
+  from every memory.
+
+Each compile only sends the memories added since the last one, with the
+current compiled knowledge - so profiles stay stable and long chats stay
+cheap. A compile that fails, or whose answer would drop everything, leaves
+the previous result in place.
+
+See it in **Review memories -> Compiled**. Click a fact's *message #12* (or
+*messages #3-8*) to jump to that part of the chat. A fact resting only on
+memories that are gone - a regenerated reply, another swipe - drops out of
+the view until they are back.
+
+The compiler uses its own State Engine preset, **Archivist Memory Compiler**
+(an independent preset).
+
 ### The memory browser
 
 Every chat Archivist holds memory for, grouped by character or group, on
-the left; the chosen chat's memories on the right, newest first.
+the left; the chosen chat on the right - its **Memories** (newest first), or
+its **Compiled** memory (see above).
 
 - **Search** the text and the names of who or what a memory is about;
   **filter** by type, scope, importance or entity.

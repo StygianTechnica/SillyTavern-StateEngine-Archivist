@@ -118,7 +118,8 @@ export function createFakeStateEngine() {
         },
         // What State Engine's run does, with the model played by
         // fakeEngine.respond(context, { chatId, preset }): it returns the
-        // list to write into the preset's prompted variable, 'busy' (another
+        // list to write into the preset's first prompted variable, an object
+        // { qualifiedName: value } for several, 'busy' (another
         // independent preset is running), or throws (the model call failed).
         async runIndependentPreset(extensionId, instanceId, chatId, ref) {
             const p = preset(ref.namespace, ref.name);
@@ -136,8 +137,10 @@ export function createFakeStateEngine() {
                 record({ lastOutcome: 'skipped-in-progress', lastError: null });
                 return false;
             }
-            const [q] = [...p.variables.keys()];
-            values.set(`${chatId}|${q}`, structuredClone(answer));
+            // A list fills the preset's first variable; an object maps
+            // qualified variable names to values.
+            const writes = Array.isArray(answer) ? [[[...p.variables.keys()][0], answer]] : Object.entries(answer ?? {});
+            for (const [q, value] of writes) values.set(`${chatId}|${q}`, structuredClone(value));
             announce(chatId);
             record({ lastOutcome: 'updated', lastError: null });
             return true;

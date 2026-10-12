@@ -27,9 +27,8 @@ import { LOG_PREFIX } from '../constants.js';
 import { getSettings, saveSettings } from '../settings.js';
 import { findPreset } from '../api/presets.js';
 import { getVariable, createVariable, updateVariable, getVariableValue, setVariableValue } from '../api/variables.js';
-import {
-    createIndependentPreset, configureIndependentPreset, updateIndependentPresetContext, runIndependentPreset, getIndependentPresetStatus,
-} from '../api/independent-presets.js';
+import { createIndependentPreset, configureIndependentPreset, updateIndependentPresetContext } from '../api/independent-presets.js';
+import { runIndependentWithRetry } from './independent-run.js';
 import { listObjectTypeIds, getObjectByAlias } from '../api/objects.js';
 import { addMemoryRecords, getAllMemories } from '../memory/archivist.js';
 import { getCurrentChatRef, chatKeyFor, getChatEntry, ensureChatEntry, updateChatEntry } from '../memory/registry.js';
@@ -56,11 +55,8 @@ export const CATCH_UP_HEADER = [
     '',
 ].join('\n');
 
-// How long to wait, and how often, when another independent preset is running.
-export const BUSY_RETRY_MS = 2000;
-export const BUSY_RETRIES = 30;
-
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+// Waiting out another independent preset - shared with the compiler.
+export { BUSY_RETRY_MS, BUSY_RETRIES } from './independent-run.js';
 
 // ---------------------------------------------------------------- the preset
 
@@ -137,16 +133,8 @@ function snapshotChat() {
 
 // Runs the preset for one chunk, waiting while another independent preset
 // runs. Resolves to { ok, error }.
-async function runChunk(chatId) {
-    for (let attempt = 0; ; attempt++) {
-        if (await runIndependentPreset(chatId, CATCH_UP_PRESET)) return { ok: true, error: null };
-        const status = await getIndependentPresetStatus(CATCH_UP_PRESET);
-        if (status?.lastOutcome === 'skipped-in-progress' && attempt < BUSY_RETRIES && !cancelRequested) {
-            await sleep(BUSY_RETRY_MS);
-            continue;
-        }
-        return { ok: false, error: status?.lastError || status?.lastOutcome || 'the run did not write anything' };
-    }
+function runChunk(chatId) {
+    return runIndependentWithRetry(CATCH_UP_PRESET, chatId, () => cancelRequested);
 }
 
 // One run of the catch-up preset at a time - a pass's chunks and an edited

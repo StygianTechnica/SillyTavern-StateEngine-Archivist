@@ -55,6 +55,21 @@ export function catchUpLine(progress, openChatKey) {
     }
 }
 
+// The compiler status line: { text, error }. `status`: getCompilerStatus()
+// (src/compiler/compiler.js); `compiled`: { at, pending } for the open chat,
+// or null when it was never compiled.
+export function compilerLine(status, compiled) {
+    const time = (iso) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    if (status?.running) {
+        const part = status.batches > 1 ? ` - part ${status.batch} of ${status.batches}` : '';
+        return { text: `${status.rebuild ? 'Rebuilding' : 'Compiling'}${part}...`, error: false };
+    }
+    if (status?.outcome === 'failed') return { text: `The last compile failed: ${status.error || 'see the browser console'}.`, error: true };
+    if (!compiled) return { text: 'Not compiled yet.', error: false };
+    const pending = compiled.pending ? ` · ${compiled.pending} new ${compiled.pending === 1 ? 'memory' : 'memories'} since` : ' · up to date';
+    return { text: `Compiled ${time(compiled.at)}${pending}.`, error: false };
+}
+
 // The line under "This chat": the open chat and how many memories it has.
 export function chatSummary(chatOpen, count) {
     if (!chatOpen) return 'No chat open.';

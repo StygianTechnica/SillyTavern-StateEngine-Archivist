@@ -10,10 +10,11 @@ import { getSettings, saveSettings } from '../settings.js';
 import { getAllMemories, MEMORIES_CHANGED_EVENT } from '../memory/archivist.js';
 import { getCurrentChatRef, chatKeyFor } from '../memory/registry.js';
 import { getLiveHealth, onLiveHealthChange, repairLiveExtraction, setArchivistEnabled, getLastHarvest, onHarvest } from '../extraction/live.js';
-import { statusLine, chatSummary, recentMemories, memoryView, lastHarvestLine, catchUpLine } from './drawer-model.js';
+import { statusLine, chatSummary, recentMemories, memoryView, lastHarvestLine, catchUpLine, compilerLine } from './drawer-model.js';
 import { startCatchUp, cancelCatchUp, getCatchUpProgress, onCatchUpProgress, isCatchUpRunning } from '../extraction/catch-up.js';
 import { listConnectionProfiles } from './connection-profiles.js';
 import { openMemoryBrowser } from './memory-browser.js';
+import { compileOpenChat, getCompilerStatus, onCompilerStatus, getCompiledMemory, isCompiling, COMPILED_CHANGED_EVENT } from '../compiler/compiler.js';
 
 // SillyTavern resolves extension templates relative to
 // public/scripts/extensions/, i.e. "third-party/<folder name>". Derived
@@ -62,10 +63,10 @@ function memoryRow(record) {
 
 // ---- catch-up
 
-function fillConnections() {
-    const select = byId('ar_connection');
+function fillConnections(selectId = 'ar_connection', key = 'connectionProfileId') {
+    const select = byId(selectId);
     if (!select) return;
-    const chosen = getSettings().connectionProfileId || '';
+    const chosen = getSettings()[key] || '';
     const options = [{ id: '', name: 'Same as State Engine' }, ...listConnectionProfiles()];
     if (chosen && !options.some((o) => o.id === chosen)) options.push({ id: chosen, name: '(profile no longer exists)' });
     select.replaceChildren(...options.map((o) => {
@@ -122,6 +123,59 @@ function wireCatchUp() {
     byId('ar_catchup_cancel').addEventListener('click', () => cancelCatchUp());
     onCatchUpProgress(renderCatchUp);
     renderCatchUp();
+}
+
+// ---- compiler
+
+let compilerToken = 0;
+
+async function renderCompiler() {
+    const token = ++compilerToken;
+    const view = getCurrentChatRef() ? await getCompiledMemory() : null;
+    if (token !== compilerToken || !byId('ar_compile_status')) return;
+    const line = compilerLine(getCompilerStatus(), view ? { at: view.compiledAt, pending: view.pending } : null);
+    const status = byId('ar_compile_status');
+    status.textContent = line.text;
+    status.classList.toggle('ar-status-error', line.error);
+    const busy = isCompiling() || !getCurrentChatRef();
+    for (const id of ['ar_compile_now', 'ar_compile_rebuild']) byId(id).dataset.disabled = busy ? 'true' : 'false';
+}
+
+function refreshCompiler() {
+    void renderCompiler().catch((err) => console.warn(LOG_PREFIX, 'could not show the compiler status', err));
+}
+
+function wireCompiler() {
+    const auto = byId('ar_compile_auto');
+    auto.checked = getSettings().compileAuto !== false;
+    auto.addEventListener('change', () => {
+        getSettings().compileAuto = auto.checked;
+        saveSettings();
+    });
+    bindNumber('ar_compile_threshold', 'compileThreshold', 1, 200);
+    bindNumber('ar_compile_interval', 'compileIntervalMinutes', 1, 1440);
+    bindNumber('ar_compile_gap', 'compileMinGapMinutes', 0, 1440);
+    bindNumber('ar_compiler_tokens', 'compilerMaxTokens', 500, 32000);
+    fillConnections('ar_compiler_connection', 'compilerConnectionProfileId');
+    const select = byId('ar_compiler_connection');
+    select.addEventListener('focus', () => fillConnections('ar_compiler_connection', 'compilerConnectionProfileId'));
+    select.addEventListener('change', () => {
+        getSettings().compilerConnectionProfileId = select.value;
+        saveSettings();
+    });
+    const run = (rebuild) => async () => {
+        if (byId(rebuild ? 'ar_compile_rebuild' : 'ar_compile_now').dataset.disabled === 'true') return;
+        await compileOpenChat({ rebuild, reason: rebuild ? 'rebuild' : 'manual' });
+        refreshCompiler();
+    };
+    byId('ar_compile_now').addEventListener('click', run(false));
+    byId('ar_compile_rebuild').addEventListener('click', run(true));
+    onCompilerStatus(refreshCompiler);
+    const { eventSource, eventTypes } = SillyTavern.getContext();
+    eventSource.on(COMPILED_CHANGED_EVENT, refreshCompiler);
+    eventSource.on(MEMORIES_CHANGED_EVENT, refreshCompiler);
+    eventSource.on(eventTypes.CHAT_CHANGED, refreshCompiler);
+    refreshCompiler();
 }
 
 let chatToken = 0;
@@ -183,6 +237,7 @@ export async function addSettingsDrawer() {
 
     byId('ar_open_browser').addEventListener('click', () => void openMemoryBrowser());
     wireCatchUp();
+    wireCompiler();
 
     onLiveHealthChange(renderStatus);
     onHarvest(renderStatus);

@@ -155,6 +155,24 @@ describe('the Archivist drawer', () => {
         await waitFor(() => expect($('ar_chat_info').textContent).toBe('1 memory stored for this chat:'));
     });
 
+    it('compiles this chat on Compile now and shows when it did', async () => {
+        await addMemoryRecords(getCurrentChatRef(), [item('Lucian works at the gym')]);
+        fake.respond = async () => ({ archivist__compiled_facts: [{ text: 'Lucian works at the gym.', classification: 'PERMANENT', sources: ['m1'] }], archivist__compiled_relationships: [] });
+        await openDrawer();
+        await waitFor(() => expect($('ar_compile_status').textContent).toBe('Not compiled yet.'));
+        $('ar_compile_now').click();
+        await waitFor(() => expect($('ar_compile_status').textContent).toMatch(/^Compiled .+ · up to date\.$/));
+    });
+
+    it('saves the compiler settings', async () => {
+        await openDrawer();
+        $('ar_compile_auto').checked = false;
+        $('ar_compile_auto').dispatchEvent(new Event('change'));
+        $('ar_compile_threshold').value = '25';
+        $('ar_compile_threshold').dispatchEvent(new Event('change'));
+        expect(getSettings()).toMatchObject({ compileAuto: false, compileThreshold: 25 });
+    });
+
     it('follows chat changes', async () => {
         await openDrawer();
         await addMemoryRecords(getCurrentChatRef(), [item('alice memory')]);

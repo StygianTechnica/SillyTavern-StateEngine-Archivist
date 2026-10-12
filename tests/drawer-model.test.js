@@ -1,4 +1,4 @@
-import { statusLine, chatSummary, recentMemories, memoryView, RECENT_COUNT } from '../src/ui/drawer-model.js';
+import { statusLine, chatSummary, recentMemories, memoryView, compilerLine, RECENT_COUNT } from '../src/ui/drawer-model.js';
 
 describe('statusLine', () => {
     it('says off while disabled, whatever the health', () => {
@@ -53,5 +53,16 @@ describe('memoryView', () => {
     it('leaves out "About" for a memory naming no one', () => {
         const view = memoryView({ subtype: 'fact', scope: 'scene', importance: 'low', text: 't', entity_ids: [], source_message_id: 's', created_at: 'c' });
         expect(view.title).not.toContain('About');
+    });
+});
+
+describe('compilerLine', () => {
+    it('says what the compiler is doing or did', () => {
+        expect(compilerLine(null, null).text).toBe('Not compiled yet.');
+        expect(compilerLine({ running: true, batch: 2, batches: 3 }, null).text).toBe('Compiling - part 2 of 3...');
+        expect(compilerLine({ running: true, rebuild: true, batches: 1 }, null).text).toBe('Rebuilding...');
+        expect(compilerLine({ outcome: 'failed', error: 'model down' }, null)).toEqual({ text: 'The last compile failed: model down.', error: true });
+        expect(compilerLine({ outcome: 'compiled' }, { at: '2026-10-11T12:00:00.000Z', pending: 0 }).text).toMatch(/^Compiled .+ · up to date\.$/);
+        expect(compilerLine(null, { at: '2026-10-11T12:00:00.000Z', pending: 2 }).text).toMatch(/· 2 new memories since\.$/);
     });
 });

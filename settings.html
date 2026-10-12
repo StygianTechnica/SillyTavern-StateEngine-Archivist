@@ -57,6 +57,53 @@
 
             <div class="ar-section">
                 <div class="ar-heading">
+                    <i class="fa-solid fa-diagram-project"></i>
+                    <b>Compiler</b>
+                </div>
+                <small class="ar-hint">Turns this chat's memories into character profiles, scene state, session details, relationships and a timeline - merging repeats, flagging contradictions. Review the result under Review memories -> Compiled.</small>
+                <label class="checkbox_label" title="Compile on its own while Archivist is enabled - after enough new memories, or after a while with some. Never on every message.">
+                    <input id="ar_compile_auto" type="checkbox" />
+                    <span>Compile automatically</span>
+                </label>
+                <div class="ar-row">
+                    <label class="ar-field" title="Compile once this many new memories have arrived (near-repeats don't count).">
+                        <span>After new memories</span>
+                        <input id="ar_compile_threshold" type="number" class="text_pole" min="1" max="200" step="1" />
+                    </label>
+                    <label class="ar-field" title="Also compile this long after the last compile, if there is at least one new memory.">
+                        <span>Or every (minutes)</span>
+                        <input id="ar_compile_interval" type="number" class="text_pole" min="1" max="1440" step="1" />
+                    </label>
+                    <label class="ar-field" title="Never compile on its own sooner than this after the last compile.">
+                        <span>Not within (minutes)</span>
+                        <input id="ar_compile_gap" type="number" class="text_pole" min="0" max="1440" step="1" />
+                    </label>
+                </div>
+                <div class="ar-row">
+                    <label class="ar-field" title="The model the compiler runs on - State Engine's own connection, or any SillyTavern connection profile.">
+                        <span>Connection</span>
+                        <select id="ar_compiler_connection" class="text_pole"></select>
+                    </label>
+                    <label class="ar-field" title="The longest answer a compile may give - the whole compiled list comes back each time.">
+                        <span>Max tokens</span>
+                        <input id="ar_compiler_tokens" type="number" class="text_pole" min="500" max="32000" step="100" />
+                    </label>
+                </div>
+                <div class="ar-row">
+                    <div id="ar_compile_now" class="menu_button menu_button_icon" title="Compile this chat's new memories now">
+                        <i class="fa-solid fa-gears"></i><span>Compile now</span>
+                    </div>
+                    <div id="ar_compile_rebuild" class="menu_button menu_button_icon" title="Start over: compile every memory of this chat from scratch">
+                        <i class="fa-solid fa-rotate"></i><span>Rebuild</span>
+                    </div>
+                </div>
+                <small id="ar_compile_status" class="ar-status"></small>
+            </div>
+
+            <hr class="sysHR" />
+
+            <div class="ar-section">
+                <div class="ar-heading">
                     <i class="fa-solid fa-book-bookmark"></i>
                     <b>This chat</b>
                 </div>

@@ -5,6 +5,12 @@
 // the ONLY way stored memory is ever removed; Archivist never deletes on
 // its own (src/memory/chat-lifecycle.js).
 //
+// Two views of the chosen chat: its MEMORIES (search, filters, deletion),
+// and its COMPILED memory (src/compiler/) - character profiles, scene state,
+// session details, relationships and the timeline, each fact with its colour
+// tag and a link to the chat messages it came from (for the open chat, a
+// click jumps there).
+//
 // Opened from the drawer's "Review memories" button. What it shows comes
 // from src/ui/memory-browser-model.js; every memory's text is put on the
 // page as text, never as markup.
@@ -17,6 +23,8 @@ import { checkChatsExist } from '../memory/chat-existence.js';
 import { getObject } from '../api/objects.js';
 import { groupChats, filterChoices, filterRecords, shortDate, sourceLabel } from './memory-browser-model.js';
 import { confirmAction } from './confirm.js';
+import { getCompiledMemory, compileOpenChat, isCompiling, COMPILED_CHANGED_EVENT } from '../compiler/compiler.js';
+import { jumpToMessage } from './chat-jump.js';
 
 const EMPTY_FILTERS = Object.freeze({ search: '', subtype: '', scope: '', importance: '', entity: '' });
 
@@ -28,6 +36,8 @@ const state = {
     existence: new Map(), // chatKey -> true | false | null
     filters: { ...EMPTY_FILTERS },
     checked: new Set(),   // ids of the memories ticked for "Delete selected"
+    view: 'memories',     // 'memories' | 'compiled'
+    compiled: null,       // the selected chat's compiled view (getCompiledMemory), or null
 };
 let overlay = null;
 let loadToken = 0;
@@ -64,9 +74,16 @@ async function loadSelected() {
             // A name State Engine cannot give: the id is shown instead.
         }
     }
+    let compiled = null;
+    try {
+        compiled = entry ? await getCompiledMemory(key) : null;
+    } catch {
+        compiled = null;
+    }
     if (token !== loadToken) return;
     state.records = records;
     state.names = names;
+    state.compiled = compiled;
     const ids = new Set(records.map((r) => r.id));
     state.checked = new Set([...state.checked].filter((id) => ids.has(id)));
     render();
@@ -200,10 +217,128 @@ function renderRecords() {
         : [el('div', 'ar-mb-empty', state.records.length ? 'No memories match these filters.' : 'This chat has no memories stored.')]));
 }
 
+// ---- the compiled view
+
+// "message #12" / "messages #3-8" for an item's message_range, as a link
+// that jumps there when its chat is open.
+function messageLink(range) {
+    if (!range) return null;
+    const label = range.from === range.to ? `message #${range.from}` : `messages #${range.from}-${range.to}`;
+    if (state.selectedKey !== openChatKey()) {
+        const text = el('span', 'ar-mb-link ar-mb-link-off', label);
+        text.title = 'Open this chat to jump to the messages';
+        return text;
+    }
+    const link = el('button', 'ar-mb-link', label);
+    link.type = 'button';
+    link.dataset.mbJump = String(range.from);
+    link.title = `Show ${label} in the chat`;
+    return link;
+}
+
+function tagChip(item) {
+    const chip = el('span', 'ar-mb-chip', item.color_name);
+    chip.style.setProperty('--ar-chip', item.color_hex);
+    return chip;
+}
+
+function factRow(fact) {
+    const row = el('div', 'ar-mb-fact');
+    row.style.setProperty('--ar-chip', fact.color_hex);
+    const meta = el('div', 'ar-mb-record-meta');
+    meta.append(tagChip(fact));
+    if (fact.theme) meta.append(el('span', '', fact.theme));
+    const about = fact.entities.map((e) => e.name).filter(Boolean).join(', ');
+    if (about) meta.append(el('span', '', `about ${about}`));
+    const link = messageLink(fact.message_range);
+    if (link) meta.append(link);
+    row.append(meta, el('div', 'ar-mb-record-text', fact.text));
+    if (fact.contradicts?.length) row.title = `Contradicts: ${fact.contradicts.join(', ')}`;
+    return row;
+}
+
+function relationshipRow(rel) {
+    const row = el('div', 'ar-mb-fact');
+    row.style.setProperty('--ar-chip', rel.color_hex);
+    const meta = el('div', 'ar-mb-record-meta');
+    meta.append(tagChip(rel), el('span', '', `${rel.from.name} - ${rel.type} - ${rel.to.name}`));
+    const link = messageLink(rel.message_range);
+    if (link) meta.append(link);
+    row.append(meta, el('div', 'ar-mb-record-text', rel.text));
+    return row;
+}
+
+function timelineRow(item) {
+    const row = el('div', 'ar-mb-fact ar-mb-timeline');
+    const meta = el('div', 'ar-mb-record-meta');
+    meta.append(el('span', '', `${words(item.scope)} · ${item.importance}`));
+    const link = messageLink(item.message_index === null ? null : { from: item.message_index, to: item.message_index });
+    if (link) meta.append(link);
+    row.append(meta, el('div', 'ar-mb-record-text', item.text));
+    return row;
+}
+
+function section(title, rows, emptyText) {
+    const box = el('div', 'ar-mb-section');
+    box.append(el('div', 'ar-mb-section-title', title));
+    box.append(...(rows.length ? rows : [el('div', 'ar-mb-empty', emptyText)]));
+    return box;
+}
+
+function renderCompiled() {
+    const list = part('records');
+    const view = state.compiled;
+    const isOpen = state.selectedKey === openChatKey();
+    const compileButton = (label) => {
+        const button = el('button', 'menu_button menu_button_icon', '');
+        button.type = 'button';
+        button.dataset.mb = 'compileNow';
+        button.append(el('i', 'fa-solid fa-gears'), el('span', '', label));
+        button.disabled = isCompiling();
+        return button;
+    };
+    if (!view) {
+        const empty = el('div', 'ar-mb-empty', isOpen
+            ? 'Not compiled yet. The compiler runs on its own once enough memories have arrived (Archivist drawer -> Compiler), or now:'
+            : 'Not compiled yet. Open this chat to compile it.');
+        list.replaceChildren(...(isOpen ? [empty, compileButton('Compile now')] : [empty]));
+        part('count').textContent = '';
+        return;
+    }
+    const time = view.compiledAt ? shortDate(view.compiledAt) : '';
+    part('count').textContent = `compiled ${time}${view.pending ? ` · ${view.pending} new since` : ''}`;
+    const head = el('div', 'ar-mb-compiled-head');
+    if (isOpen && view.pending) head.append(compileButton(`Compile the ${view.pending} new`));
+    list.replaceChildren(
+        head,
+        section('Character profiles', view.character_profiles.map((profile) => {
+            const box = el('div', 'ar-mb-profile');
+            box.append(el('div', 'ar-mb-owner-name', profile.name), ...profile.facts.map(factRow));
+            return box;
+        }), 'No lasting facts yet.'),
+        section('Scene', view.scene_state.map(factRow), 'Nothing about the current scene.'),
+        section('Session', view.session_details.map(factRow), 'Nothing about this part of the story.'),
+        section('Relationships', view.relationships.map(relationshipRow), 'No relationships yet.'),
+        section('Timeline', view.timeline.map(timelineRow), 'No events yet.'),
+    );
+}
+
+function renderViewSwitch() {
+    for (const button of overlay.querySelectorAll('[data-mb-view]')) {
+        button.classList.toggle('ar-mb-view-active', button.dataset.mbView === state.view);
+    }
+}
+
 function render() {
     if (!overlay || !state.open) return;
     renderChats();
+    renderViewSwitch();
     renderRecords();
+    if (state.view === 'compiled' && getChatEntry(state.selectedKey ?? '')) {
+        part('toolbar').hidden = true;
+        part('chatActions').hidden = true;
+        renderCompiled();
+    }
 }
 
 // -------------------------------------------------------------- actions
@@ -240,6 +375,22 @@ async function deleteSelectedChat() {
 function onClick(e) {
     if (e.target === overlay || e.target.closest('[data-mb="close"]')) {
         closeMemoryBrowser();
+        return;
+    }
+    const viewButton = e.target.closest('[data-mb-view]');
+    if (viewButton) {
+        state.view = viewButton.dataset.mbView;
+        render();
+        return;
+    }
+    const jump = e.target.closest('[data-mb-jump]');
+    if (jump) {
+        void jumpToMessage(Number(jump.dataset.mbJump));
+        return;
+    }
+    if (e.target.closest('[data-mb="compileNow"]')) {
+        void compileOpenChat({ reason: 'manual' }).then(() => loadSelected());
+        render();
         return;
     }
     const chat = e.target.closest('[data-chat-key]');
@@ -313,6 +464,10 @@ function build() {
                 <div class="ar-mb-main">
                     <div class="ar-mb-main-head">
                         <b data-mb="title"></b>
+                        <div class="ar-mb-views">
+                            <button type="button" class="menu_button" data-mb-view="memories" title="The memories as stored - search, filter, delete">Memories</button>
+                            <button type="button" class="menu_button" data-mb-view="compiled" title="Profiles, scene, session, relationships and timeline, compiled from the memories">Compiled</button>
+                        </div>
                         <small class="ar-mb-count" data-mb="count"></small>
                     </div>
                     <div class="ar-mb-toolbar" data-mb="toolbar">
@@ -343,19 +498,23 @@ function build() {
         if (state.open && e.key === 'Escape' && !document.querySelector('.popup:not([hidden])')) closeMemoryBrowser();
     });
     // Stay current while open: new memories, deletions, renamed chats.
-    SillyTavern.getContext().eventSource.on(MEMORIES_CHANGED_EVENT, () => {
+    const refresh = () => {
         if (state.open) {
             render();
             void loadSelected();
         }
-    });
+    };
+    SillyTavern.getContext().eventSource.on(MEMORIES_CHANGED_EVENT, refresh);
+    SillyTavern.getContext().eventSource.on(COMPILED_CHANGED_EVENT, refresh);
 }
 
 // Opens the browser on the open chat (or the first chat with memories).
-export async function openMemoryBrowser() {
+// `view`: 'memories' (default) or 'compiled'.
+export async function openMemoryBrowser({ view = 'memories' } = {}) {
     // (Re)built when missing - something may have removed it from the page.
     if (!overlay?.isConnected) build();
     state.open = true;
+    state.view = view;
     state.selectedKey = null;
     state.filters = { ...EMPTY_FILTERS };
     state.checked.clear();

@@ -10,6 +10,9 @@ Memory for SillyTavern chats, built on the
   read-only query APIs.
 - Catch-up: extracts memories from a chat's earlier messages in the background,
   optionally on a different model (any SillyTavern connection profile).
+- A compiler that turns memories into character profiles, scene state, session
+  details, relationships and a timeline - deduplicated, colour-tagged, contradictions
+  flagged, every fact linked back to the chat messages it came from.
 - A memory browser to search, review and delete memories, for every chat -
   including deleted ones.
 

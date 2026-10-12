@@ -103,6 +103,56 @@ Why only the open chat for the first two: the indexes behind them
 those two can answer instantly. For another chat, filter
 `getAllMemories(chatId)` yourself.
 
+### `getCompiledMemory(chat_id?)` -> `Promise<compiled | null>`
+
+The chat's **compiled** memory (the Archivist Compiler - see the user
+guide): `null` when it was never compiled. `chat_id` works as for
+`getAllMemories()`; omitted, the open chat.
+
+```js
+{
+  compiledAt,                  // ISO time of the last compile
+  pending,                     // memories stored since, not compiled in yet
+  character_profiles: [{ entity_id, name, facts: [fact] }],   // PERMANENT facts, by entity
+  scene_state: [fact],         // SCENE facts
+  session_details: [fact],     // SESSION facts
+  relationships: [relationship],
+  timeline: [{ memory_id, text, entity_ids, message_index, source_message_id,
+               chat_id, scope, importance, created_at }],     // event memories, story order
+}
+
+fact = {
+  id,                          // "f3" - stable across compiles while it is the same fact
+  text, theme,                 // "employment", "finances", "transportation"...
+  classification,              // "PERMANENT" | "SESSION" | "SCENE"
+  entities: [{ id | null, name }],
+  contradicts: [fact ids],
+  // colour tag (red for a contradiction, otherwise by classification):
+  tag: { name, color, hex }, color_tag, color_name, color_hex,
+  // where in the chat it comes from:
+  chat_id,
+  source_memory_ids: [memory ids],
+  source_messages: [{ memory_id, message_index, source_message_id }],   // story order
+  message_range: { from, to } | null,                                   // message indexes
+}
+
+relationship = {
+  from: { id | null, name }, to: { id | null, name }, type, text,      // type: "trains", "distrusts"...
+  tag, color_tag: 'Purple', color_name: 'Relationship', color_hex,
+  chat_id, source_memory_ids, source_messages, message_range,
+}
+```
+
+Colours (`hex` is Archivist's, so every UI matches): Permanent `#4a90d9`
+blue, Session `#d4b03c` yellow, Scene `#4caf50` green, Relationship
+`#a070e0` purple, Contradiction `#e05555` red.
+
+The view is built against the chat's memories **as they are now**: a fact or
+relationship resting only on memories that are gone (deleted, a regenerated
+reply, another swipe) is left out, and `message_range` / `source_messages`
+always point at the messages' current positions - use them to link a fact
+back to that part of the chat (SillyTavern's `/chat-jump <index>`).
+
 ## Following changes
 
 After any change to a chat's memory - new memories stored, the user
@@ -120,6 +170,9 @@ eventSource.on(archivist.MEMORIES_CHANGED_EVENT, ({ chatId }) => {
 
 `chatKey` is Archivist's own id for the chat (character or group plus
 chat id); you can pass it to `getAllMemories()` too.
+
+After a compile, `COMPILED_CHANGED_EVENT` (`'archivist_compiled_changed'`),
+same payload - re-read `getCompiledMemory()`.
 
 ## Examples
 
@@ -145,6 +198,6 @@ eventSource.on(archivist.MEMORIES_CHANGED_EVENT, () => void showLog());
 
 ## What Archivist does not do (yet)
 
-Per the MVP spec: no relevance ranking, timelines, arcs, hooks or
-summaries, and no detecting contradictions. Records are what the model
-extracted, stored as they came - build interpretation on top of these APIs.
+No relevance ranking, arcs, hooks, mysteries or dangers. Raw records are what
+the model extracted, stored as they came; the compiled memory is the one
+interpreted layer (profiles, relationships, a timeline, contradictions).

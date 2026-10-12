@@ -30,7 +30,7 @@ import { createMemoryRecord, isMemoryRecord } from './schema.js';
 import { buildIndexes } from './indexes.js';
 import { readMemoryFileQueued, updateMemoryFile, deleteMemoryFile } from './storage.js';
 import {
-    getCurrentChatRef, chatKeyFor, getChatEntry, ensureChatEntry, findChatEntriesById, updateChatEntry, removeChatEntry, moveChatEntry,
+    getCurrentChatRef, chatKeyFor, getChatEntry, ensureChatEntry, findChatEntriesById, updateChatEntry, removeChatEntry, moveChatEntry, compiledFileFor,
 } from './registry.js';
 
 // Emitted on SillyTavern's event bus after a chat's stored memory changes,
@@ -172,13 +172,15 @@ export async function deleteMemoryRecords(chatKey, ids) {
     return removed;
 }
 
-// Deletes everything stored for a chat: its file and its registry entry.
+// Deletes everything stored for a chat: its memories file, its compiled
+// memory (src/compiler/) and its registry entry.
 // Resolves to true, or false when the chat has nothing stored. Throws if
 // the file could not be deleted - the entry is kept then.
 export async function deleteChatMemories(chatKey) {
     const entry = getChatEntry(chatKey);
     if (!entry) return false;
     await deleteMemoryFile(entry.fileName);
+    await deleteMemoryFile(compiledFileFor(entry));
     removeChatEntry(chatKey);
     if (chatKey === state.chatKey) setRecords([]);
     emitChanged(chatKey, entry.chatId);
