@@ -454,8 +454,9 @@ function renderCompiled() {
     list.replaceChildren(
         head,
         ...(suggestions.length ? [section('Suggested aliases', suggestions.map(aliasRow), '')] : []),
+        section('Story so far', view.story_summary ? [summaryRow(view.story_summary)] : [], 'No summary yet - the next compile writes one.'),
         section('Characters', view.character_profiles.map(profileBox), 'No lasting facts or insights yet.'),
-        section('Scene', view.scene_state.map(factRow), 'Nothing about the current scene.'),
+        section('Scene', sceneRows(view), 'Nothing about the current scene yet.'),
         section('Session', view.session_details.map(factRow), 'Nothing about this part of the story.'),
         section('Relationship map', map ? [map] : [], 'Needs relationships between at least two characters.'),
         section('Relationships', view.relationships.map((r) => relationshipRow(r)), 'No relationships yet.'),
@@ -463,6 +464,31 @@ function renderCompiled() {
         ...worldSections,
         section('Timeline', view.timeline.map(timelineRow), 'No events yet.'),
     );
+}
+
+function summaryRow(text) {
+    const row = el('div', 'ar-mb-fact ar-mb-summary');
+    row.append(el('div', 'ar-mb-record-text', text));
+    return row;
+}
+
+// The scene: the compiler's summary of it, the facts it classed SCENE, and
+// - from the memories themselves - what just happened in it.
+function sceneRows(view) {
+    const rows = [];
+    if (view.scene_summary) rows.push(summaryRow(view.scene_summary));
+    rows.push(...view.scene_state.map(factRow));
+    for (const memory of view.scene_recent ?? []) {
+        const row = el('div', 'ar-mb-fact ar-mb-scene-recent');
+        const meta = el('div', 'ar-mb-record-meta');
+        meta.append(el('span', '', 'just happened'));
+        if (memory.tone) meta.append(el('span', '', memory.tone));
+        const link = messageLink({ from: memory.message_index, to: memory.message_index });
+        if (link) meta.append(link);
+        row.append(meta, el('div', 'ar-mb-record-text', memory.text));
+        rows.push(row);
+    }
+    return rows;
 }
 
 // A name the story uses for an object that the object doesn't have

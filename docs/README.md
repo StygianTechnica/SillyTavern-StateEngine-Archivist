@@ -110,10 +110,13 @@ It works whether or not *Enable Archivist* is on.
 Raw memories pile up and repeat themselves. The compiler turns a chat's
 memories into structured knowledge:
 
+- **Story so far** - a summary of the story, revised with each compile
 - **Characters** - lasting facts, by character (and place, faction...), and
   what the memories reveal about each character: personality traits,
   habits, stressors, motivations, their arc so far, how they feel lately
-- **Scene** - what holds in the immediate scene: arrivals, weather, transport
+- **Scene** - a summary of the current scene, what holds in it (arrivals,
+  weather, transport), and what just happened - the scene memories of the
+  newest dozen messages, straight from the memories
 - **Session** - what holds for this part of the story
 - **Relationships** - each direction of a pair: what the relationship is
   (friend, mentor, colleague, rival... in the model's own words), its
@@ -172,6 +175,30 @@ Compiler** and **Archivist World Compiler** (independent presets). State
 Engine queues their runs, catch-up's and its own per-message update on the
 connection they share, one at a time - so a compile started while catch-up
 runs just waits its turn.
+
+### Archivist in the prompt (with Curator)
+
+With the **Curator** extension installed, Archivist's knowledge can go into
+the prompt the model writes the story from. Open Curator's Prompt Analyzer:
+the **State Engine Variables** bank lists Archivist's blocks - tick the
+ones you want and drag them where they belong:
+
+- **Story so far** - the compiled summary
+- **Current scene** - its summary, what holds in it, what just happened
+- **Characters in the scene** - traits, motivations, stressors, feelings of
+  the characters present
+- **Relationships in the scene** - between the characters present and your
+  persona: type, polarity, intensity, trend
+- **Open threads and quests** - plot hooks, threads and quests still open
+- **Recent events** - the latest events, with who witnessed them
+- **Secrets (narrator only)** - secrets still kept and who knows them:
+  knowledge for the narrator, not something the characters know
+
+"Present" is State Engine's own idea of who is in the scene (the characters
+marked present); without that, whoever the newest scene memories name.
+Archivist keeps the blocks current as memories arrive, after a compile and
+when the scene changes; a block with nothing to say sends nothing. They
+work while Archivist is enabled for the chat.
 
 ### The memory browser
 

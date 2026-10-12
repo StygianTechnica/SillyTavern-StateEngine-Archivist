@@ -38,6 +38,7 @@ import { MEMORY_VARIABLE, memoryVariableDef } from './memory-variable.js';
 import { convertExtractedItems, createEntityResolver } from './converter.js';
 import { sourceMessageId, lastReplyIndex } from './messages.js';
 import { rememberExtracted } from '../memory/message-fingerprints.js';
+import { CONTEXT_BLOCKS, contextVariableDef } from '../context/prompt-context.js';
 
 export const LIVE_PRESET = 'Archivist Recent Memory Collection';
 
@@ -85,6 +86,12 @@ export async function ensureLivePreset() {
         if (!await createVariable(LIVE_PRESET, MEMORY_VARIABLE, def)) throw new Error(`could not create the ${MEMORY_VARIABLE} variable`);
     } else if (settings.liveVariableVersion !== LIVE_VARIABLE_VERSION) {
         if (!await updateVariable(LIVE_PRESET, MEMORY_VARIABLE, def)) throw new Error(`could not update the ${MEMORY_VARIABLE} variable`);
+    }
+    // The prompt-context variables Curator can inject (src/context/).
+    for (const [name, label, description] of CONTEXT_BLOCKS) {
+        if (!await getVariable(LIVE_PRESET, name) && !await createVariable(LIVE_PRESET, name, contextVariableDef(label, description))) {
+            throw new Error(`could not create the ${name} variable`);
+        }
     }
     if (settings.liveVariableVersion !== LIVE_VARIABLE_VERSION) {
         settings.liveVariableVersion = LIVE_VARIABLE_VERSION;

@@ -387,6 +387,8 @@ describe('compiling through the independent preset', () => {
             archivist__compiled_characters: [{ name: 'Lucian', traits: ['steady'], sources: refs.slice(0, 1) }],
             archivist__compiled_threads: [{ id: 't1', kind: 'quest seed', title: 'Promotion', text: 'Lucian might be promoted.', status: 'open', involved: ['Lucian'], sources: refs.slice(0, 1) }],
             archivist__compiled_world: [{ id: 'w1', kind: 'location', name: 'The gym', text: 'Where Lucian works.', sources: refs.slice(0, 1) }],
+            archivist__compiled_story_summary: refs.length ? `Lucian worked through ${refs.length} memories.` : '',
+            archivist__compiled_scene_summary: '',
         };
     };
 
@@ -405,7 +407,10 @@ describe('compiling through the independent preset', () => {
         const preset = fake.presets.get(`archivist.${COMPILER_PRESET}`);
         expect(preset.independentPreset).toBe(true);
         expect(preset.independentConfig.promptedHeader).toBe(COMPILER_HEADER);
-        expect([...preset.variables.keys()]).toEqual(['archivist__compiled_facts', 'archivist__compiled_relationships', 'archivist__compiled_characters']);
+        expect([...preset.variables.keys()]).toEqual([
+            'archivist__compiled_facts', 'archivist__compiled_relationships', 'archivist__compiled_characters', 'archivist__compiled_story_summary', 'archivist__compiled_scene_summary',
+        ]);
+        expect(preset.variables.get('archivist__compiled_story_summary')).toMatchObject({ type: 'string', prompted: { newEachTurn: true } });
         expect(preset.variables.get('archivist__compiled_facts').prompted.newEachTurn).toBe(true);
         const world = fake.presets.get(`archivist.${WORLD_COMPILER_PRESET}`);
         expect(world.independentConfig.promptedHeader).toBe(WORLD_COMPILER_HEADER);
@@ -440,6 +445,9 @@ describe('compiling through the independent preset', () => {
         expect(view.threads[0]).toMatchObject({ title: 'Promotion', status: 'open', involved: [{ id: 'chr_lucian' }] });
         expect(view.world.location[0]).toMatchObject({ name: 'The gym' });
         expect(view.outdated).toBe(false);
+        expect(view.story_summary).toBe('Lucian worked through 1 memories.');
+        expect(view.scene_summary).toBe('');
+        expect(fake.readValue('Chat A', 'archivist__compiled_story_summary')).toBe('');
         expect(fake.readValue('Chat A', 'archivist__compiled_world')).toEqual([]);
         expect(view.timeline).toHaveLength(1);
         expect(await getCompiledMemory('Chat A')).toEqual(view);

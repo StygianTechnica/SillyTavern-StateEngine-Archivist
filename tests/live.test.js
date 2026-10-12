@@ -3,6 +3,7 @@ import { resetFakeStateEngine } from './harness/state-engine.js';
 import { loadCurrentChat, getMemoriesForEntity, getAllMemories } from '../src/memory/archivist.js';
 import { getSettings } from '../src/settings.js';
 import { ensureLivePreset, syncLivePreset, harvest, startLiveExtraction, repairLiveExtraction, LIVE_PRESET, LIVE_VARIABLE_VERSION } from '../src/extraction/live.js';
+import { CONTEXT_BLOCKS } from '../src/context/prompt-context.js';
 
 vi.mock('../src/api/state-engine.js', () => import('./harness/state-engine-mock.js'));
 
@@ -38,7 +39,8 @@ describe('ensureLivePreset', () => {
         await ensureLivePreset();
 
         expect(fake.calls.filter((c) => c.name === 'createPreset')).toHaveLength(1);
-        expect(fake.calls.filter((c) => c.name === 'createVariable')).toHaveLength(1);
+        // The memory variable and the prompt-context ones (src/context/), each once.
+        expect(fake.calls.filter((c) => c.name === 'createVariable')).toHaveLength(1 + CONTEXT_BLOCKS.length);
         expect(fake.calls.filter((c) => c.name === 'updateVariable')).toHaveLength(0);
         expect(fake.presets.get(`archivist.${LIVE_PRESET}`).variables.get(VAR).prompted.instructions).toBe('my own wording');
     });

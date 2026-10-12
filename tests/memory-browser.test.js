@@ -209,7 +209,9 @@ describe('the memory browser window', () => {
         await openMemoryBrowser({ view: 'compiled' });
         // Two facts, the relationship (in Mira's profile and in the list), and
         // the one event memory on the timeline.
-        await waitFor(() => expect(qa('.ar-mb-fact')).toHaveLength(5));
+        await waitFor(() => expect(qa('.ar-mb-fact:not(.ar-mb-scene-recent)')).toHaveLength(5));
+        // Both memories are scene-scope: the Scene shows them as just happened.
+        expect(qa('.ar-mb-scene-recent .ar-mb-record-text').map((n) => n.textContent)).toEqual(['Mira hid the key.', 'They reached the inn.']);
         expect(qa('.ar-mb-timeline .ar-mb-record-text').map((n) => n.textContent)).toEqual(['They reached the inn.']);
         const chips = qa('.ar-mb-chip').map((c) => c.textContent);
         expect(chips).toEqual(['Permanent', 'Relationship', 'Scene', 'Relationship']);

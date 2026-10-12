@@ -42,6 +42,9 @@ src/compiler/                 compiled memory: profiles and insights, scene, ses
   compiler.js                 the two compiler presets, batched runs, storage, scheduling
   dossier.js                  from an object to everything known about it
 
+src/context/                  Archivist's knowledge as prompt text, for Curator
+  prompt-context.js           the blocks, built from the compiled view (plain functions)
+  prompt-sync.js              keeps the open chat's block variables current
 src/ui/                       the drawer, the memory browser, confirmations
 src/public-api.js             what other extensions use (docs/api.md)
 src/api/                      thin State Engine wrappers (see "Reaching the State Engine API")
@@ -326,6 +329,33 @@ them.
   (`chat-existence.js`: the character or group is gone, or
   `POST /api/characters/chats` / `group.chats` no longer lists it), and the
   user decides.
+
+## Prompt context for Curator
+
+`src/context/`. Curator injects State Engine variables that an extension
+offers with a `curator.inject:<variable>` capability (Curator's
+docs/injection-blocks.md). Archivist declares one for each block in
+`CONTEXT_BLOCKS` (story so far, current scene, characters and relationships
+in the scene, open threads and quests, recent events, secrets) and keeps
+them as plain, non-prompted text variables in the live preset - so they
+have values while Archivist is enabled for the chat, and the model is never
+asked for them.
+
+`buildPromptContext()` builds the texts from the compiled view, focused on
+who is in play: the characters State Engine marks present (else those the
+newest scene memories name) and the user's persona, matched by id or name
+words (`entity-link.js` `nameKey`). `syncPromptContext()` rebuilds them,
+debounced, after memories change, after a compile, on a chat change and on
+State Engine's variables-changed event, and writes only the blocks whose
+text changed - so its own writes, which State Engine announces as a change
+too, settle at once.
+
+The memory part of the compiler also answers two text variables,
+`compiled_story_summary` and `compiled_scene_summary`, stored as
+`compiled.summary` (`parseSummary()`: a new answer replaces, an empty one
+keeps). The view's Scene adds `scene_recent` - the scene-scope memories of
+the newest `SCENE_WINDOW` messages, from the memories themselves, since the
+model rarely classes a fact SCENE.
 
 ## The UI
 

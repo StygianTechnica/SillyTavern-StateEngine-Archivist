@@ -22,6 +22,8 @@
 //   world entry   { id: "w<n>", kind (WORLD_KINDS), name, text,
 //                   entity (the object it names, or null), known_by:
 //                   [entity] (secrets), involved: [entity], status, sources }
+//   summary       { story, scene } - the story so far, the current scene
+//                 (the memory part's two summaries; '' until compiled)
 //   schema        COMPILED_SCHEMA when compiled; an older state (1: facts
 //                 and relationships only) is still read, and flagged
 //                 `outdated` in the view until rebuilt
@@ -45,8 +47,16 @@ import { parseSource, messageDateOf } from '../memory/message-sync-plan.js';
 export const COMPILED_SCHEMA = 2;
 
 export const EMPTY_COMPILED = Object.freeze({
-    facts: [], relationships: [], characters: [], threads: [], world: [], included: [], compiledAt: null, schema: COMPILED_SCHEMA,
+    facts: [], relationships: [], characters: [], threads: [], world: [], summary: Object.freeze({ story: '', scene: '' }),
+    included: [], compiledAt: null, schema: COMPILED_SCHEMA,
 });
+
+// The next summary from the model's answers (strings): each one given
+// replaces the previous, a missing or empty one keeps it.
+export function parseSummary(story, scene, previous) {
+    const clean = (value) => (typeof value === 'string' ? value.trim() : '');
+    return { story: clean(story) || previous?.story || '', scene: clean(scene) || previous?.scene || '' };
+}
 
 const isText = (value) => typeof value === 'string' && value.trim() !== '';
 const names = (value) => {
@@ -108,7 +118,12 @@ function characterLine(c) {
 // character insights, then the new memories. `nameOf(id)` -> a display
 // name for an entity id (or null).
 export function compileContext(previous, batch, nameOf = () => null) {
-    const lines = ['Current compiled knowledge:', 'Facts:'];
+    const lines = [
+        'Current compiled knowledge:',
+        `Story so far: ${previous.summary?.story || '(none yet)'}`,
+        `Current scene: ${previous.summary?.scene || '(none yet)'}`,
+        'Facts:',
+    ];
     if (previous.facts.length === 0) lines.push('(none yet)');
     for (const fact of previous.facts) {
         const about = entityList(fact.entities);
@@ -378,10 +393,31 @@ function recentTone(records, window = 20) {
     return [...counts].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([tone, count]) => ({ tone, count }));
 }
 
+// How far back from the newest memory's message "the current scene" reaches.
+export const SCENE_WINDOW = 12;
+
+// The current scene from the memories themselves, not the model's
+// classification (which rarely says SCENE): the scene-scope memories of
+// the last SCENE_WINDOW messages before the newest memory, in story order -
+// [{ memory_id, text, message_index, tone, entity_ids, witness_ids }].
+export function recentSceneMemories(records, window = SCENE_WINDOW) {
+    const indexed = records.map((r) => ({ r, index: messageIndexOf(r) })).filter((x) => x.index !== null);
+    if (indexed.length === 0) return [];
+    const newest = Math.max(...indexed.map((x) => x.index));
+    return indexed
+        .filter((x) => x.r.scope === 'scene' && x.index > newest - window)
+        .sort((a, b) => a.index - b.index)
+        .map(({ r, index }) => ({
+            memory_id: r.id, text: r.text, message_index: index, tone: r.tone ?? '', entity_ids: [...r.entity_ids], witness_ids: [...(r.witness_ids ?? [])],
+        }));
+}
+
 // The compiled view of `compiled` for the chat's `records` as they are now
 // (deleted memories and other swipes' left out). `nameOf(id)` gives names
 // for the witnesses on the timeline (null when unknown).
-//   { compiledAt, outdated,
+//   { compiledAt, outdated, story_summary, scene_summary (the compiler's
+//     own summaries, '' until compiled with them),
+//     scene_recent: recentSceneMemories() - the scene from the memories,
 //     character_profiles: [{ entity_id, entity_type, name, facts, traits,
 //       habits, stressors, motivations, arc, emotional_state,
 //       relationships: [relationship with direction 'out' | 'in'] }],
@@ -470,8 +506,11 @@ export function buildCompiledView(compiled, records, nameOf = () => null) {
     return {
         compiledAt: compiled.compiledAt,
         outdated: (compiled.schema ?? 1) < COMPILED_SCHEMA,
+        story_summary: compiled.summary?.story ?? '',
+        scene_summary: compiled.summary?.scene ?? '',
         character_profiles: [...profiles.values()].sort((a, b) => a.name.localeCompare(b.name)),
         scene_state: tagged.filter((f) => f.classification === 'SCENE'),
+        scene_recent: recentSceneMemories(records),
         session_details: tagged.filter((f) => f.classification === 'SESSION'),
         relationships,
         relationship_map: relationshipMap,

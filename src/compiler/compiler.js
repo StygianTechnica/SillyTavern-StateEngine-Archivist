@@ -39,7 +39,7 @@ import { getCurrentChatRef, chatKeyFor, getChatEntry, findChatEntriesById, updat
 import { readJsonFile, writeJsonFile } from '../memory/storage.js';
 import { runIndependent } from '../extraction/independent-run.js';
 import {
-    EMPTY_COMPILED, COMPILED_SCHEMA, refsFor, compileContext, worldContext, parseCompileOutput, parseCharacters, parseThreads, parseWorld, changesSince, buildCompiledView,
+    EMPTY_COMPILED, COMPILED_SCHEMA, refsFor, compileContext, worldContext, parseCompileOutput, parseCharacters, parseThreads, parseWorld, parseSummary, changesSince, buildCompiledView,
 } from './compile-plan.js';
 import { meaningfulCount, shouldCompile } from './schedule.js';
 
@@ -48,6 +48,8 @@ export const WORLD_COMPILER_PRESET = 'Archivist World Compiler';
 export const FACTS_VARIABLE = 'compiled_facts';
 export const RELATIONSHIPS_VARIABLE = 'compiled_relationships';
 export const CHARACTERS_VARIABLE = 'compiled_characters';
+export const STORY_SUMMARY_VARIABLE = 'compiled_story_summary';
+export const SCENE_SUMMARY_VARIABLE = 'compiled_scene_summary';
 export const THREADS_VARIABLE = 'compiled_threads';
 export const WORLD_VARIABLE = 'compiled_world';
 
@@ -75,7 +77,7 @@ const SILENT = [
 
 export const COMPILER_HEADER = [
     ...SILENT,
-    'You will be given the current compiled knowledge about a story - facts (each with an id like [f3]), relationships and character insights - and new memories extracted from the story (each with a ref like [m1]).',
+    'You will be given the current compiled knowledge about a story - the story so far, the current scene, facts (each with an id like [f3]), relationships and character insights - and new memories extracted from the story (each with a ref like [m1], with the message number it comes from).',
     'Update the compiled knowledge with the new memories: evaluate each variable according to its conditions and return the required JSON output.',
     '',
 ].join('\n');
@@ -150,6 +152,30 @@ const WORLD_INSTRUCTIONS = [
     '"sources": the refs [m...] of the NEW memories it uses ([] if none)}.',
 ].join(' ');
 
+const STORY_SUMMARY_INSTRUCTIONS = [
+    'The story so far in 4 to 8 sentences: the current "Story so far" revised and extended with the new memories - the main events in order, and where things stand now.',
+    'Past tense. Name the characters. No commentary.',
+].join(' ');
+
+const SCENE_SUMMARY_INSTRUCTIONS = [
+    'The current scene in 2 or 3 sentences: where the characters are, who is there, and what is happening right now - from the newest memories (the highest message numbers), or the current scene if they add nothing to it.',
+    'Present tense. No commentary.',
+].join(' ');
+
+// A prompted text answer (the summaries), read and cleared like the lists.
+function summaryDef(instructions, label) {
+    return {
+        label,
+        description: 'Archivist compiler output. Read and cleared by Archivist after each run.',
+        type: 'string',
+        defaultValue: '',
+        scope: 'chat',
+        showInTracker: false,
+        behaviors: { prompted: true, increment: false },
+        prompted: { instructions, newEachTurn: true },
+    };
+}
+
 function variableDef(instructions, label, itemSchema) {
     return {
         label,
@@ -174,6 +200,8 @@ const PRESETS = [
             [FACTS_VARIABLE, () => variableDef(FACTS_INSTRUCTIONS, 'Compiled facts', { text: { type: 'string' } })],
             [RELATIONSHIPS_VARIABLE, () => variableDef(RELATIONSHIPS_INSTRUCTIONS, 'Compiled relationships', { from: { type: 'string' }, to: { type: 'string' }, type: { type: 'string' } })],
             [CHARACTERS_VARIABLE, () => variableDef(CHARACTERS_INSTRUCTIONS, 'Compiled character insights', { name: { type: 'string' } })],
+            [STORY_SUMMARY_VARIABLE, () => summaryDef(STORY_SUMMARY_INSTRUCTIONS, 'Compiled story summary')],
+            [SCENE_SUMMARY_VARIABLE, () => summaryDef(SCENE_SUMMARY_INSTRUCTIONS, 'Compiled scene summary')],
         ],
     },
     {
@@ -225,6 +253,7 @@ const normalizeCompiled = (data) => ({
     characters: list(data?.characters),
     threads: list(data?.threads),
     world: list(data?.world),
+    summary: { story: String(data?.summary?.story ?? ''), scene: String(data?.summary?.scene ?? '') },
     included: list(data?.included),
     compiledAt: data?.compiledAt ?? null,
     schema: data ? (data.schema ?? 1) : COMPILED_SCHEMA,
@@ -368,8 +397,14 @@ async function resolveNames(answers, resolver) {
     return (name) => resolved.get(name) ?? { id: null, name, type: null };
 }
 
+// A list answer ([] when none), or a text one ('' when none) - emptied
+// after reading, so the next run starts fresh.
 async function readAndClear(chatId, presetName, name) {
     const value = await getVariableValue(chatId, name);
+    if (typeof value === 'string') {
+        if (value) await setVariableValue(chatId, presetName, name, '');
+        return value;
+    }
     if (Array.isArray(value) && value.length) await setVariableValue(chatId, presetName, name, []);
     return Array.isArray(value) ? value : [];
 }
@@ -420,7 +455,8 @@ async function compileRun(ref, { rebuild }) {
         setStatus({ batch: b + 1, part: 'memory' });
         const batch = batches[b];
         const refs = refsFor(batch);
-        const memory = await runPart(COMPILER_PRESET, [FACTS_VARIABLE, RELATIONSHIPS_VARIABLE, CHARACTERS_VARIABLE], compileContext(compiled, batch, nameOf), ref.chatId);
+        const memory = await runPart(COMPILER_PRESET, [FACTS_VARIABLE, RELATIONSHIPS_VARIABLE, CHARACTERS_VARIABLE, STORY_SUMMARY_VARIABLE, SCENE_SUMMARY_VARIABLE],
+            compileContext(compiled, batch, nameOf), ref.chatId);
         let world = { [THREADS_VARIABLE]: [], [WORLD_VARIABLE]: [] };
         if (withWorld) {
             setStatus({ part: 'world' });
@@ -437,6 +473,7 @@ async function compileRun(ref, { rebuild }) {
         compiled = {
             ...next,
             characters: parseCharacters(memory[CHARACTERS_VARIABLE], options),
+            summary: parseSummary(memory[STORY_SUMMARY_VARIABLE], memory[SCENE_SUMMARY_VARIABLE], compiled.summary),
             threads: withWorld ? parseThreads(world[THREADS_VARIABLE], options) : compiled.threads,
             world: withWorld ? parseWorld(world[WORLD_VARIABLE], options) : compiled.world,
             included: [...new Set([...compiled.included, ...batch.map((r) => r.id)])],

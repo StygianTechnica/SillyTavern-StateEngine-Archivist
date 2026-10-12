@@ -18,11 +18,14 @@ import { addSettingsDrawer } from './ui/settings-drawer.js';
 import { startChatLifecycle } from './memory/chat-lifecycle.js';
 import { startMessageSync } from './memory/message-sync.js';
 import { startCompiler } from './compiler/compiler.js';
+import { startPromptContext, CONTEXT_CAPABILITIES, CONTEXT_VARIABLE_NAMES } from './context/prompt-sync.js';
 
 // What Archivist provides to other extensions (see docs/architecture.md,
 // "Capabilities"): memory.store - it stores State Engine's extracted
-// memory; memory.query - the query APIs in src/public-api.js.
-const CAPABILITIES = ['memory.store', 'memory.query'];
+// memory; memory.query - the query APIs in src/public-api.js;
+// curator.inject:<variable> - each prompt-context block Curator can inject
+// (src/context/).
+const CAPABILITIES = ['memory.store', 'memory.query', ...CONTEXT_CAPABILITIES];
 
 // Starts the memory core: loads the open chat's memory and indexes, keeps
 // them in step with chat changes, and publishes the query API.
@@ -61,6 +64,7 @@ export async function initExtension() {
 
         await registerWithStateEngine(EXTENSION_ID, {
             namespace: NAMESPACE,
+            variables: CONTEXT_VARIABLE_NAMES,
             capabilities: CAPABILITIES,
             description: 'Stores and indexes the memory records State Engine extracts from each chat, and serves them to other extensions.',
         });
@@ -97,6 +101,11 @@ export async function initExtension() {
         startCompiler();
     } catch (err) {
         console.error(`${LOG_PREFIX} the compiler failed to start.`, err);
+    }
+    try {
+        startPromptContext();
+    } catch (err) {
+        console.error(`${LOG_PREFIX} the prompt context for Curator failed to start.`, err);
     }
     // The drawer shows live extraction's state - including a failure to
     // start, with its Repair button - so it is added either way.
