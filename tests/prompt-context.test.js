@@ -63,15 +63,15 @@ describe('buildPromptContext', () => {
 
     it('writes every block, focused on who is present', () => {
         expect(Object.keys(out)).toEqual(CONTEXT_BLOCKS.map(([name]) => name));
-        expect(out.ctx_story_summary).toBe('Story so far (Archivist):\nSyrvanus searched for Alvaryx.');
+        expect(out.ctx_story_summary).toBe('Story so far:\nSyrvanus searched for Alvaryx.');
         expect(out.ctx_scene).toBe([
-            'Current scene (Archivist):', 'Syrvanus talks with gremlins in the Chronicle Room.', '- It is night.', 'Just happened:', '- The gremlins revealed themselves.',
+            'Current scene:', 'Syrvanus talks with gremlins in the Chronicle Room.', '- It is night.', 'Just happened:', '- The gremlins revealed themselves.',
         ].join('\n'));
-        expect(out.ctx_scene_characters).toBe('Characters in this scene (Archivist):\n- A lead gremlin: traits: cautious; wants: serve the Mnemos; feeling: eager');
+        expect(out.ctx_scene_characters).toBe('Characters in this scene:\n- A lead gremlin: traits: cautious; wants: serve the Mnemos; feeling: eager');
         // Zeno is not here: his relationship stays out; the gremlin's name matches loosely.
-        expect(out.ctx_scene_relationships).toBe('Relationships in this scene (Archivist):\n- Syrvanus Voxaris -> gremlin (lead): ally, close (+2), medium intensity, warming. He accepts their help.');
-        expect(out.ctx_threads).toBe('Open story threads and quests (Archivist):\n- [active] Find Alvaryx (quest): Alvaryx is missing. Progress: The gremlins offered to help.');
-        expect(out.ctx_recent_events).toBe('Recent events (Archivist):\n- Zeno collared Syrvanus. (witnessed by Rydia)');
+        expect(out.ctx_scene_relationships).toBe('Relationships in this scene:\n- Syrvanus Voxaris -> gremlin (lead): ally, close (+2), medium intensity, warming. He accepts their help.');
+        expect(out.ctx_threads).toBe('Open story threads and quests:\n- [active] Find Alvaryx (quest): Alvaryx is missing. Progress: The gremlins offered to help.');
+        expect(out.ctx_recent_events).toBe('Recent events:\n- Zeno collared Syrvanus. (witnessed by Rydia)');
         expect(out.ctx_secrets).toContain('- The collar: It is venomous. Known only by: Zeno.');
         expect(out.ctx_secrets).not.toContain('gremlin plot');
     });
@@ -102,7 +102,7 @@ describe('the prompt context in State Engine, for Curator', () => {
         await compileOpenChat();
 
         await syncPromptContext();
-        expect(fake.readValue('Chat A', 'archivist__ctx_story_summary')).toBe('Story so far (Archivist):\nLucian started at the gym.');
+        expect(fake.readValue('Chat A', 'archivist__ctx_story_summary')).toBe('Story so far:\nLucian started at the gym.');
         const writes = () => fake.calls.filter((c) => c.name === 'setVariableValue' && String(c.args[1]?.variableName ?? '').startsWith('ctx_')).length;
         const before = writes();
         await syncPromptContext();

@@ -15,13 +15,13 @@ import { nameKey } from '../compiler/entity-link.js';
 // The blocks, in the order a user would usually want them: [local variable
 // name, label, what it holds].
 export const CONTEXT_BLOCKS = Object.freeze([
-    ['ctx_story_summary', 'Archivist: story so far', 'A summary of the story so far, from the compiled memory.'],
-    ['ctx_scene', 'Archivist: current scene', 'The current scene: its summary, what holds in it, and what just happened.'],
-    ['ctx_scene_characters', 'Archivist: characters in the scene', 'Traits, motivations, stressors and feelings of the characters present.'],
-    ['ctx_scene_relationships', 'Archivist: relationships in the scene', 'How the characters present (and your persona) relate to each other.'],
-    ['ctx_threads', 'Archivist: open threads and quests', 'Plot hooks, unresolved threads and quests still open or active.'],
-    ['ctx_recent_events', 'Archivist: recent events', 'The latest events of the story, in order.'],
-    ['ctx_secrets', 'Archivist: secrets (narrator only)', 'Secrets still kept, and who knows them - knowledge for the narrator, not the characters.'],
+    ['ctx_story_summary', 'Story so far', 'A summary of the story so far, from the compiled memory.'],
+    ['ctx_scene', 'Current scene', 'The current scene: its summary, what holds in it, and what just happened.'],
+    ['ctx_scene_characters', 'Characters in the scene', 'Traits, motivations, stressors and feelings of the characters present.'],
+    ['ctx_scene_relationships', 'Relationships in the scene', 'How the characters present (and your persona) relate to each other.'],
+    ['ctx_threads', 'Open threads and quests', 'Plot hooks, unresolved threads and quests still open or active.'],
+    ['ctx_recent_events', 'Recent events', 'The latest events of the story, in order.'],
+    ['ctx_secrets', 'Secrets (narrator only)', 'Secrets still kept, and who knows them - knowledge for the narrator, not the characters.'],
 ]);
 
 export const MAX_ITEMS = 8;
@@ -65,14 +65,14 @@ export function buildPromptContext(view, { present = [], persona = null } = {}) 
     const isPresent = matcher(present);
     const inPlay = matcher(persona ? [...present, persona] : present);
 
-    if (view.story_summary) out.ctx_story_summary = `Story so far (Archivist):\n${view.story_summary}`;
+    if (view.story_summary) out.ctx_story_summary = `Story so far:\n${view.story_summary}`;
 
     const sceneLines = [];
     if (view.scene_summary) sceneLines.push(view.scene_summary);
     for (const fact of (view.scene_state ?? []).slice(-MAX_ITEMS)) sceneLines.push(`- ${fact.text}`);
     const recent = (view.scene_recent ?? []).slice(-MAX_ITEMS);
     if (recent.length) sceneLines.push('Just happened:', ...recent.map((m) => `- ${m.text}`));
-    out.ctx_scene = block('Current scene (Archivist):', sceneLines);
+    out.ctx_scene = block('Current scene:', sceneLines);
 
     const characterLines = (view.character_profiles ?? [])
         .filter((p) => isPresent({ id: p.entity_id, name: p.name }))
@@ -85,7 +85,7 @@ export function buildPromptContext(view, { present = [], persona = null } = {}) 
             return parts.length ? `- ${p.name}: ${parts.join('; ')}` : null;
         })
         .filter(Boolean);
-    out.ctx_scene_characters = block('Characters in this scene (Archivist):', characterLines);
+    out.ctx_scene_characters = block('Characters in this scene:', characterLines);
 
     const relationshipLines = (view.relationships ?? [])
         .filter((r) => inPlay(r.from) && inPlay(r.to) && (isPresent(r.from) || isPresent(r.to)))
@@ -94,25 +94,25 @@ export function buildPromptContext(view, { present = [], persona = null } = {}) 
             const how = [r.type, `${r.polarity_label} (${signed(r.polarity)})`, `${r.intensity} intensity`, r.trend].filter(Boolean).join(', ');
             return `- ${r.from.name} -> ${r.to.name}: ${how}.${r.text ? ` ${r.text}` : ''}`;
         });
-    out.ctx_scene_relationships = block('Relationships in this scene (Archivist):', relationshipLines);
+    out.ctx_scene_relationships = block('Relationships in this scene:', relationshipLines);
 
     const threadLines = (view.threads ?? [])
         .filter((t) => t.status === 'open' || t.status === 'active')
         .slice(0, MAX_ITEMS)
         .map((t) => `- [${t.status}] ${t.title} (${t.kind}): ${t.text}${t.progress ? ` Progress: ${t.progress}` : ''}`);
-    out.ctx_threads = block('Open story threads and quests (Archivist):', threadLines);
+    out.ctx_threads = block('Open story threads and quests:', threadLines);
 
     const eventLines = (view.timeline ?? []).slice(-MAX_ITEMS).map((e) => {
         const witnesses = (e.witnesses ?? []).map((w) => w.name).filter(Boolean).join(', ');
         return `- ${e.text}${witnesses ? ` (witnessed by ${witnesses})` : ''}`;
     });
-    out.ctx_recent_events = block('Recent events (Archivist):', eventLines);
+    out.ctx_recent_events = block('Recent events:', eventLines);
 
     const secretLines = (view.world?.secret ?? [])
         .filter((w) => !w.status || w.status === 'kept')
         .slice(0, MAX_ITEMS)
         .map((w) => `- ${w.name}: ${w.text}${w.known_by?.length ? ` Known only by: ${names(w.known_by)}.` : ''}`);
-    out.ctx_secrets = block('Secrets (Archivist) - narrator knowledge; characters know only what they know:', secretLines);
+    out.ctx_secrets = block('Secrets (narrator knowledge; characters know only what they know):', secretLines);
 
     return out;
 }

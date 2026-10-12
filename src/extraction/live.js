@@ -52,7 +52,8 @@ const OLD_LIVE_PRESET_NAMES = ['Live'];
 // 2: NEW EACH TURN, and a lower bar for what counts as a memory.
 // 3: who was present, prioritization tags, emotional tone.
 // 4: at most LIVE_MAX_MEMORIES, optional present/tags/tone, ANSWER LAST.
-export const LIVE_VARIABLE_VERSION = 4;
+// 5: the prompt-context variables' labels (no "Archivist:" prefix).
+export const LIVE_VARIABLE_VERSION = 5;
 
 const harvests = new Map(); // chatId -> { running, again, retry: items[] }
 
@@ -89,8 +90,11 @@ export async function ensureLivePreset() {
     }
     // The prompt-context variables Curator can inject (src/context/).
     for (const [name, label, description] of CONTEXT_BLOCKS) {
-        if (!await getVariable(LIVE_PRESET, name) && !await createVariable(LIVE_PRESET, name, contextVariableDef(label, description))) {
-            throw new Error(`could not create the ${name} variable`);
+        const contextDef = contextVariableDef(label, description);
+        if (!await getVariable(LIVE_PRESET, name)) {
+            if (!await createVariable(LIVE_PRESET, name, contextDef)) throw new Error(`could not create the ${name} variable`);
+        } else if (settings.liveVariableVersion !== LIVE_VARIABLE_VERSION && !await updateVariable(LIVE_PRESET, name, contextDef)) {
+            throw new Error(`could not update the ${name} variable`);
         }
     }
     if (settings.liveVariableVersion !== LIVE_VARIABLE_VERSION) {

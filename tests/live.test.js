@@ -49,7 +49,8 @@ describe('ensureLivePreset', () => {
         await ensureLivePreset();
         getSettings().liveVariableVersion = 0;
         await ensureLivePreset();
-        expect(fake.calls.filter((c) => c.name === 'updateVariable')).toHaveLength(1);
+        // The memory variable and the prompt-context ones.
+        expect(fake.calls.filter((c) => c.name === 'updateVariable')).toHaveLength(1 + CONTEXT_BLOCKS.length);
         expect(getSettings().liveVariableVersion).toBe(LIVE_VARIABLE_VERSION);
     });
 
