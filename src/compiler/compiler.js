@@ -66,6 +66,8 @@ export const COMPILED_CHANGED_EVENT = 'archivist_compiled_changed';
 const SILENT = [
     'You are a silent background memory-compilation process for a roleplay chat application.',
     'You are not a character in the roleplay and must not narrate, comment, or add anything besides the requested output.',
+    // Small models wrote `"motivations": [] (unknown)` - not JSON.
+    'Answer in strict JSON: for anything not known, use [] or "" - never add notes, comments or anything else outside the quoted values.',
 ];
 
 export const COMPILER_HEADER = [
