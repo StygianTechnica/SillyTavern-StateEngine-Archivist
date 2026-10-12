@@ -23,10 +23,11 @@ import { checkChatsExist } from '../memory/chat-existence.js';
 import { getObject } from '../api/objects.js';
 import { groupChats, filterChoices, filterRecords, shortDate, sourceLabel } from './memory-browser-model.js';
 import { confirmAction } from './confirm.js';
-import { getCompiledMemory, compileOpenChat, isCompiling, COMPILED_CHANGED_EVENT } from '../compiler/compiler.js';
+import { getCompiledMemory, compileOpenChat, isCompiling, getCompilerStatus, onCompilerStatus, COMPILED_CHANGED_EVENT } from '../compiler/compiler.js';
+import { compilerLine } from './drawer-model.js';
 import { jumpToMessage } from './chat-jump.js';
 
-const EMPTY_FILTERS = Object.freeze({ search: '', subtype: '', scope: '', importance: '', entity: '' });
+const EMPTY_FILTERS = Object.freeze({ search: '', subtype: '', scope: '', importance: '', entity: '', tag: '' });
 
 const state = {
     open: false,
@@ -147,7 +148,7 @@ function option(value, label, selected) {
 }
 
 function renderFilters() {
-    const { subtypes, entities } = filterChoices(state.records);
+    const { subtypes, entities, tags } = filterChoices(state.records);
     const fill = (name, values, anyLabel, label = (v) => v) => {
         const select = part(name);
         const current = state.filters[name];
@@ -159,6 +160,7 @@ function renderFilters() {
     fill('scope', [...SCOPES], 'Any scope', words);
     fill('importance', [...IMPORTANCE_LEVELS], 'Any importance');
     fill('entity', entities, 'Anyone', (id) => state.names.get(id) ?? id);
+    fill('tag', tags, 'Any tag');
     if (part('search').value !== state.filters.search) part('search').value = state.filters.search;
 }
 
@@ -175,10 +177,12 @@ function recordRow(record) {
     for (const text of [words(record.subtype), words(record.scope), record.importance, sourceLabel(record.source_message_id), shortDate(record.created_at)]) {
         if (text) meta.append(el('span', '', text));
     }
+    for (const tag of record.tags ?? []) meta.append(el('span', `ar-mb-tag ar-mb-memory-tag ar-mb-memory-tag-${tag}`, tag));
+    if (record.tone) meta.append(el('span', 'ar-mb-tone', record.tone));
     body.append(meta, el('div', 'ar-mb-record-text', record.text));
-    if (record.entity_ids.length) {
-        body.append(el('div', 'ar-mb-record-entities', `About: ${record.entity_ids.map((id) => state.names.get(id) ?? id).join(', ')}`));
-    }
+    const named = (ids) => ids.map((id) => state.names.get(id) ?? id).join(', ');
+    if (record.entity_ids.length) body.append(el('div', 'ar-mb-record-entities', `About: ${named(record.entity_ids)}`));
+    if (record.witness_ids?.length) body.append(el('div', 'ar-mb-record-entities', `Present: ${named(record.witness_ids)}`));
     row.title = `${record.id}\nFrom: ${record.source_message_id}`;
     const remove = el('button', 'menu_button fa-solid fa-trash-can ar-mb-delete-one');
     remove.type = 'button';
@@ -257,27 +261,6 @@ function factRow(fact) {
     return row;
 }
 
-function relationshipRow(rel) {
-    const row = el('div', 'ar-mb-fact');
-    row.style.setProperty('--ar-chip', rel.color_hex);
-    const meta = el('div', 'ar-mb-record-meta');
-    meta.append(tagChip(rel), el('span', '', `${rel.from.name} - ${rel.type} - ${rel.to.name}`));
-    const link = messageLink(rel.message_range);
-    if (link) meta.append(link);
-    row.append(meta, el('div', 'ar-mb-record-text', rel.text));
-    return row;
-}
-
-function timelineRow(item) {
-    const row = el('div', 'ar-mb-fact ar-mb-timeline');
-    const meta = el('div', 'ar-mb-record-meta');
-    meta.append(el('span', '', `${words(item.scope)} · ${item.importance}`));
-    const link = messageLink(item.message_index === null ? null : { from: item.message_index, to: item.message_index });
-    if (link) meta.append(link);
-    row.append(meta, el('div', 'ar-mb-record-text', item.text));
-    return row;
-}
-
 function section(title, rows, emptyText) {
     const box = el('div', 'ar-mb-section');
     box.append(el('div', 'ar-mb-section-title', title));
@@ -285,40 +268,195 @@ function section(title, rows, emptyText) {
     return box;
 }
 
+// The polarity as a bar from -3 to +3, coloured by its sign.
+function polarityBar(polarity, label) {
+    const bar = el('span', 'ar-mb-polarity');
+    bar.dataset.sign = polarity > 0 ? 'positive' : (polarity < 0 ? 'negative' : 'neutral');
+    bar.style.setProperty('--ar-polarity', String(Math.abs(polarity) / 3));
+    bar.title = `${label} (${polarity > 0 ? '+' : ''}${polarity} on -3..+3)`;
+    bar.append(el('span', 'ar-mb-polarity-fill'));
+    return bar;
+}
+
+function relationshipRow(rel, { from = true } = {}) {
+    const row = el('div', 'ar-mb-fact');
+    row.style.setProperty('--ar-chip', rel.color_hex);
+    const meta = el('div', 'ar-mb-record-meta');
+    meta.append(tagChip(rel), el('span', 'ar-mb-strong', `${from ? `${rel.from.name} -> ` : ''}${rel.to.name}`), el('span', '', rel.type));
+    meta.append(polarityBar(rel.polarity, rel.polarity_label), el('span', '', `${rel.polarity_label} · ${rel.intensity} intensity${rel.trend ? ` · ${rel.trend}` : ''}`));
+    const link = messageLink(rel.message_range);
+    if (link) meta.append(link);
+    row.append(meta, el('div', 'ar-mb-record-text', rel.text));
+    return row;
+}
+
+// A grid of who feels what toward whom: rows "from", columns "to", each
+// cell coloured by polarity, its type written in it.
+function relationshipMap(map) {
+    if (map.entities.length < 2) return null;
+    const key = (e) => e.id ?? `name:${e.name.toLowerCase()}`;
+    const cells = new Map(map.cells.map((c) => [`${key(c.from)}|${key(c.to)}`, c]));
+    const scroller = el('div', 'ar-mb-map-scroll');
+    const table = el('table', 'ar-mb-map');
+    const head = el('tr');
+    head.append(el('th', 'ar-mb-map-corner', 'from \\ to'), ...map.entities.map((e) => el('th', '', e.name)));
+    table.append(head);
+    for (const from of map.entities) {
+        const row = el('tr');
+        row.append(el('th', '', from.name));
+        for (const to of map.entities) {
+            const cell = cells.get(`${key(from)}|${key(to)}`);
+            const td = el('td', from === to ? 'ar-mb-map-self' : '');
+            if (cell) {
+                td.dataset.sign = cell.polarity > 0 ? 'positive' : (cell.polarity < 0 ? 'negative' : 'neutral');
+                td.style.setProperty('--ar-polarity', String(Math.abs(cell.polarity) / 3));
+                td.textContent = cell.type;
+                td.title = `${from.name} -> ${to.name}: ${cell.type}, ${cell.polarity_label} (${cell.polarity > 0 ? '+' : ''}${cell.polarity}), ${cell.intensity} intensity${cell.trend ? `, ${cell.trend}` : ''}`;
+            }
+            row.append(td);
+        }
+        table.append(row);
+    }
+    scroller.append(table);
+    return scroller;
+}
+
+// "Traits: kind, stubborn" lines for a profile's insights.
+function insightLines(profile) {
+    const lines = [];
+    for (const [field, label] of [['traits', 'Traits'], ['habits', 'Habits'], ['stressors', 'Stressors'], ['motivations', 'Motivations']]) {
+        if (profile[field]?.length) lines.push([label, profile[field].join(', ')]);
+    }
+    if (profile.arc) lines.push(['Arc', profile.arc]);
+    if (profile.emotional_state) lines.push(['Feeling', profile.emotional_state]);
+    return lines.map(([label, text]) => {
+        const line = el('div', 'ar-mb-insight');
+        line.append(el('span', 'ar-mb-insight-label', `${label}: `), el('span', '', text));
+        return line;
+    });
+}
+
+function profileBox(profile) {
+    const box = el('div', 'ar-mb-profile');
+    const head = el('div', 'ar-mb-profile-head');
+    head.append(el('span', 'ar-mb-owner-name', profile.name));
+    if (profile.entity_type) head.append(el('span', 'ar-mb-tag', profile.entity_type));
+    box.append(head, ...insightLines(profile), ...profile.facts.map(factRow));
+    const outgoing = profile.relationships.filter((r) => r.direction === 'out');
+    if (outgoing.length) box.append(...outgoing.map((r) => relationshipRow(r, { from: false })));
+    return box;
+}
+
+const STATUS_LABELS = { open: 'Open', active: 'Active', resolved: 'Resolved', abandoned: 'Abandoned' };
+
+function threadRow(thread) {
+    const row = el('div', `ar-mb-fact ar-mb-thread ar-mb-thread-${thread.status}`);
+    const meta = el('div', 'ar-mb-record-meta');
+    meta.append(el('span', 'ar-mb-status', STATUS_LABELS[thread.status] ?? thread.status), el('span', '', thread.kind), el('span', 'ar-mb-strong', thread.title));
+    if (thread.entity) meta.append(el('span', 'ar-mb-tag', `${thread.entity.type ?? 'object'}: ${thread.entity.name}`));
+    const link = messageLink(thread.message_range);
+    if (link) meta.append(link);
+    row.append(meta, el('div', 'ar-mb-record-text', thread.text));
+    if (thread.progress) row.append(el('div', 'ar-mb-record-entities', `Progress: ${thread.progress}`));
+    const involved = thread.involved.map((e) => e.name).filter(Boolean).join(', ');
+    if (involved) row.append(el('div', 'ar-mb-record-entities', `Involves: ${involved}`));
+    return row;
+}
+
+const WORLD_SECTIONS = [
+    ['secret', 'Secrets', 'No secrets yet.'],
+    ['location', 'Locations', 'No places yet.'],
+    ['faction', 'Factions and groups', 'No groups yet.'],
+    ['item', 'Items', 'No items yet.'],
+    ['event', 'World events', 'Nothing going on in the world yet.'],
+    ['lore', 'Lore and rules', 'No lore yet.'],
+];
+
+function worldRow(entry) {
+    const row = el('div', 'ar-mb-fact');
+    const meta = el('div', 'ar-mb-record-meta');
+    meta.append(el('span', 'ar-mb-strong', entry.name));
+    if (entry.entity) meta.append(el('span', 'ar-mb-tag', entry.entity.type ?? 'object'));
+    if (entry.status) meta.append(el('span', '', entry.status));
+    const link = messageLink(entry.message_range);
+    if (link) meta.append(link);
+    row.append(meta, el('div', 'ar-mb-record-text', entry.text));
+    const knownBy = entry.known_by.map((e) => e.name).filter(Boolean).join(', ');
+    if (entry.kind === 'secret') row.append(el('div', 'ar-mb-record-entities', `Known by: ${knownBy || 'nobody named yet'}`));
+    const involved = entry.involved.map((e) => e.name).filter(Boolean).join(', ');
+    if (involved) row.append(el('div', 'ar-mb-record-entities', `Connected: ${involved}`));
+    return row;
+}
+
+function timelineRow(item) {
+    const row = el('div', `ar-mb-fact ar-mb-timeline${item.major ? ' ar-mb-major' : ''}`);
+    const meta = el('div', 'ar-mb-record-meta');
+    if (item.major) meta.append(el('span', 'ar-mb-status', 'Major'));
+    meta.append(el('span', '', `${words(item.scope)} · ${item.importance}`));
+    if (item.tone) meta.append(el('span', '', item.tone));
+    const link = messageLink(item.message_index === null ? null : { from: item.message_index, to: item.message_index });
+    if (link) meta.append(link);
+    if (item.message_date) meta.append(el('span', '', shortDate(item.message_date) || item.message_date));
+    row.append(meta, el('div', 'ar-mb-record-text', item.text));
+    const witnesses = item.witnesses.map((w) => w.name ?? w.id).join(', ');
+    if (witnesses) row.append(el('div', 'ar-mb-record-entities', `Witnessed by: ${witnesses}`));
+    return row;
+}
+
+function compileButton(name, label, icon, title) {
+    const button = el('button', 'menu_button menu_button_icon', '');
+    button.type = 'button';
+    button.dataset.mb = name;
+    button.title = title;
+    button.append(el('i', `fa-solid ${icon}`), el('span', '', label));
+    button.disabled = isCompiling();
+    return button;
+}
+
+// What the compiler is doing (or did last) for the chat shown: the
+// drawer's status line, so a click on Compile now always shows something.
+function compileStatusLine(view) {
+    const status = getCompilerStatus();
+    const forThisChat = status && status.chatKey === state.selectedKey;
+    const line = compilerLine(forThisChat ? status : null, view ? { at: view.compiledAt, pending: view.pending } : null);
+    const node = el('div', `ar-mb-compile-status${line.error ? ' ar-mb-compile-error' : ''}`, line.text);
+    node.dataset.mb = 'compileStatus';
+    return node;
+}
+
 function renderCompiled() {
     const list = part('records');
     const view = state.compiled;
     const isOpen = state.selectedKey === openChatKey();
-    const compileButton = (label) => {
-        const button = el('button', 'menu_button menu_button_icon', '');
-        button.type = 'button';
-        button.dataset.mb = 'compileNow';
-        button.append(el('i', 'fa-solid fa-gears'), el('span', '', label));
-        button.disabled = isCompiling();
-        return button;
-    };
+    const head = el('div', 'ar-mb-compiled-head');
+    head.append(compileStatusLine(view));
+    if (isOpen && (!view || view.pending)) head.append(compileButton('compileNow', view ? `Compile the ${view.pending} new` : 'Compile now', 'fa-gears', 'Compile this chat\'s new memories now'));
+    if (isOpen && view) head.append(compileButton('compileRebuild', 'Rebuild', 'fa-arrows-rotate', 'Start over: compile every memory of this chat from scratch'));
     if (!view) {
         const empty = el('div', 'ar-mb-empty', isOpen
             ? 'Not compiled yet. The compiler runs on its own once enough memories have arrived (Archivist drawer -> Compiler), or now:'
             : 'Not compiled yet. Open this chat to compile it.');
-        list.replaceChildren(...(isOpen ? [empty, compileButton('Compile now')] : [empty]));
+        list.replaceChildren(empty, head);
         part('count').textContent = '';
         return;
     }
     const time = view.compiledAt ? shortDate(view.compiledAt) : '';
-    part('count').textContent = `compiled ${time}${view.pending ? ` · ${view.pending} new since` : ''}`;
-    const head = el('div', 'ar-mb-compiled-head');
-    if (isOpen && view.pending) head.append(compileButton(`Compile the ${view.pending} new`));
+    const tone = view.recent_tone.length ? ` · lately ${view.recent_tone.map((t) => t.tone).join(', ')}` : '';
+    part('count').textContent = `compiled ${time}${view.pending ? ` · ${view.pending} new since` : ''}${tone}`;
+    if (view.outdated) {
+        head.append(el('div', 'ar-mb-empty', 'Compiled before character insights, story threads and the world were added - Rebuild to fill them in for the whole chat.'));
+    }
+    const worldSections = WORLD_SECTIONS.map(([kind, title, emptyText]) => section(title, view.world[kind].map(worldRow), emptyText));
+    const map = relationshipMap(view.relationship_map);
     list.replaceChildren(
         head,
-        section('Character profiles', view.character_profiles.map((profile) => {
-            const box = el('div', 'ar-mb-profile');
-            box.append(el('div', 'ar-mb-owner-name', profile.name), ...profile.facts.map(factRow));
-            return box;
-        }), 'No lasting facts yet.'),
+        section('Characters', view.character_profiles.map(profileBox), 'No lasting facts or insights yet.'),
         section('Scene', view.scene_state.map(factRow), 'Nothing about the current scene.'),
         section('Session', view.session_details.map(factRow), 'Nothing about this part of the story.'),
-        section('Relationships', view.relationships.map(relationshipRow), 'No relationships yet.'),
+        section('Relationship map', map ? [map] : [], 'Needs relationships between at least two characters.'),
+        section('Relationships', view.relationships.map((r) => relationshipRow(r)), 'No relationships yet.'),
+        section('Story threads and quests', view.threads.map(threadRow), 'No plot hooks, open threads or quests yet.'),
+        ...worldSections,
         section('Timeline', view.timeline.map(timelineRow), 'No events yet.'),
     );
 }
@@ -372,6 +510,14 @@ async function deleteSelectedChat() {
     await loadChats();
 }
 
+// Compile now / Rebuild from the compiled view. Its progress and outcome
+// show in the view's status line (re-drawn on every compiler status).
+async function runCompile(rebuild) {
+    const started = await compileOpenChat({ rebuild, reason: rebuild ? 'rebuild' : 'manual' });
+    if (!started) toastr.info(isCompiling() ? 'The compiler is already running - it shows its progress here.' : 'Open this chat to compile it.', 'Archivist');
+    await loadSelected();
+}
+
 function onClick(e) {
     if (e.target === overlay || e.target.closest('[data-mb="close"]')) {
         closeMemoryBrowser();
@@ -389,8 +535,12 @@ function onClick(e) {
         return;
     }
     if (e.target.closest('[data-mb="compileNow"]')) {
-        void compileOpenChat({ reason: 'manual' }).then(() => loadSelected());
-        render();
+        void runCompile(false);
+        return;
+    }
+    if (e.target.closest('[data-mb="compileRebuild"]')) {
+        void confirmAction('Rebuild the compiled memory of this chat from every memory? It starts over and runs the compiler over all of them, which can take a while and uses the compiler\'s connection.')
+            .then((yes) => (yes ? runCompile(true) : null));
         return;
     }
     const chat = e.target.closest('[data-chat-key]');
@@ -475,7 +625,8 @@ function build() {
                         <select class="text_pole" data-mb="subtype" title="Type"></select>
                         <select class="text_pole" data-mb="scope" title="Scope"></select>
                         <select class="text_pole" data-mb="importance" title="Importance"></select>
-                        <select class="text_pole" data-mb="entity" title="Who or what it is about"></select>
+                        <select class="text_pole" data-mb="entity" title="Who or what it is about, or who was there"></select>
+                        <select class="text_pole" data-mb="tag" title="Tag"></select>
                     </div>
                     <div class="ar-mb-records" data-mb="records"></div>
                     <div class="ar-mb-actions" data-mb="chatActions">
@@ -506,6 +657,10 @@ function build() {
     };
     SillyTavern.getContext().eventSource.on(MEMORIES_CHANGED_EVENT, refresh);
     SillyTavern.getContext().eventSource.on(COMPILED_CHANGED_EVENT, refresh);
+    // The compiled view shows what the compiler is doing as it does it.
+    onCompilerStatus(() => {
+        if (state.open && state.view === 'compiled') render();
+    });
 }
 
 // Opens the browser on the open chat (or the first chat with memories).

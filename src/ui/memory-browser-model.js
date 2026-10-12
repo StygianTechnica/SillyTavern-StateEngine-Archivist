@@ -27,23 +27,27 @@ export function groupChats(entries, existence = new Map(), openKey = null) {
 export function filterChoices(records) {
     const subtypes = new Set();
     const entities = new Set();
+    const tags = new Set();
     for (const record of records) {
         subtypes.add(record.subtype);
-        for (const id of record.entity_ids) entities.add(id);
+        for (const id of [...record.entity_ids, ...(record.witness_ids ?? [])]) entities.add(id);
+        for (const tag of record.tags ?? []) tags.add(tag);
     }
-    return { subtypes: [...subtypes].sort(), entities: [...entities].sort() };
+    return { subtypes: [...subtypes].sort(), entities: [...entities].sort(), tags: [...tags].sort() };
 }
 
 // The records passing every filter that is set ('' = any). `search`
-// matches the text, case-insensitively; `names` (entity id -> name) lets it
-// match the names of the entities a memory is about, too. Newest first.
-export function filterRecords(records, { search = '', subtype = '', scope = '', importance = '', entity = '' } = {}, names = new Map()) {
+// matches the text and tone, case-insensitively; `names` (entity id ->
+// name) lets it match the names of the entities a memory is about, too.
+// `entity` matches who it is about or who was present. Newest first.
+export function filterRecords(records, { search = '', subtype = '', scope = '', importance = '', entity = '', tag = '' } = {}, names = new Map()) {
     const query = search.trim().toLowerCase();
     return records.filter((record) => (!subtype || record.subtype === subtype)
         && (!scope || record.scope === scope)
         && (!importance || record.importance === importance)
-        && (!entity || record.entity_ids.includes(entity))
-        && (!query || record.text.toLowerCase().includes(query)
+        && (!entity || record.entity_ids.includes(entity) || (record.witness_ids ?? []).includes(entity))
+        && (!tag || (record.tags ?? []).includes(tag))
+        && (!query || record.text.toLowerCase().includes(query) || (record.tone ?? '').includes(query)
             || record.entity_ids.some((id) => (names.get(id) ?? id).toLowerCase().includes(query))))
         .reverse();
 }

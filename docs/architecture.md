@@ -34,11 +34,13 @@ src/extraction/               State Engine produces memories; Archivist stores t
   catch-up-plan.js            which messages a catch-up pass reads, chunks, context text
   catch-up.js                 the catch-up preset and the background pass
 
-src/compiler/                 compiled memory: profiles, scene, session, relationships, timeline
-  compiled-schema.js          classifications and colour tags
-  compile-plan.js             run context, parsing the answer, the view (with message links)
+src/compiler/                 compiled memory: profiles and insights, scene, session,
+                              relationships, threads and quests, the world, timeline
+  compiled-schema.js          classifications, colour tags, polarity/intensity/status scales
+  compile-plan.js             run contexts, parsing the answers, the view (with message links)
   schedule.js                 when to compile on its own
-  compiler.js                 the compiler preset, batched runs, storage, scheduling
+  compiler.js                 the two compiler presets, batched runs, storage, scheduling
+  dossier.js                  from an object to everything known about it
 
 src/ui/                       the drawer, the memory browser, confirmations
 src/public-api.js             what other extensions use (docs/api.md)
@@ -119,6 +121,12 @@ ordinary per-message update - no extra model call.
    and why they weren't stored.
 3. The indexes are rebuilt and `archivist_memories_changed` is emitted.
 
+Each item also names who was **present** (resolved to `witness_ids`, like
+`entities`), its prioritization **tags** (important / trivial / contextual /
+emotional) and its emotional **tone**. The converter records each resolved
+id's object type in `entity_types`, so a memory says what kind of object it
+links to.
+
 Three details of the variable (`memory-variable.js`):
 
 - It is **NEW EACH TURN** (State Engine's `prompted.newEachTurn`). Archivist
@@ -142,8 +150,9 @@ user's own edits to its instructions survive reloads - until an Archivist
 update raises the version, which replaces them once.
 
 State Engine's own max-tokens setting caps the whole update response, memory
-included: a few memories add 50-80 tokens each, and a cut-off response loses
-the whole update, not just the memories. Around 800-1000 leaves room.
+included: a few memories add 70-110 tokens each (with who was present, tags
+and tone), and a cut-off response loses the whole update, not just the
+memories. Around 1000-1200 leaves room.
 
 ### Self-repair
 
@@ -182,10 +191,11 @@ A pass, for the chat open when it starts:
    attributed to the `message_index` it names, else the chunk's last reply -
    and `addMemoryRecords()`. While every chunk so far has succeeded, move the
    resume point to the chunk's last message.
-4. A run State Engine turns away because another independent preset is
-   running (`skipped-in-progress`) is retried every 2 s, up to 30 times. A
-   chunk that still fails is counted and reported; the pass carries on and
-   the resume point stays before it, so the next pass retries it.
+4. State Engine queues each run behind whatever else is using the same
+   connection (its main update, the compiler) and resolves when it has
+   run - Archivist never waits or retries on its own. A chunk that fails is
+   counted and reported; the pass carries on and the resume point stays
+   before it, so the next pass retries it.
 
 Progress (`getCatchUpProgress()`, `onCatchUpProgress()`) drives the drawer.
 Cancel stops between chunks. A pass keeps writing to the chat it started on
@@ -228,20 +238,48 @@ go through one queue, as they share the preset's context.
 ## The compiler
 
 `src/compiler/`. Raw memories -> structured, deduplicated knowledge,
-through an **independent** State Engine preset, **Archivist Memory
-Compiler**, with its own connection, max tokens and header. Its answer comes
-back in two NEW EACH TURN record lists, `archivist__compiled_facts` and
-`archivist__compiled_relationships`, read and cleared after each run.
+through two **independent** State Engine presets sharing the compiler's
+connection, max tokens and header style. Each answers in NEW EACH TURN
+record lists, read and cleared after each run:
+
+| Preset                        | Lists                                                        |
+|-------------------------------|--------------------------------------------------------------|
+| **Archivist Memory Compiler** | `compiled_facts`, `compiled_relationships`, `compiled_characters` |
+| **Archivist World Compiler**  | `compiled_threads`, `compiled_world`                         |
+
+Two presets, so each prompt shows only the lists its part updates and each
+answer (a complete list every time) stays a manageable size. Each batch
+runs the memory part, then the world part; both are queued by State Engine
+on the connection like any other run. *Also compile story threads, quests
+and the world* (`settings.compileWorld`) turns the second part off.
 
 | Code (deterministic)                            | The model (a compile run)                         |
 |-------------------------------------------------|---------------------------------------------------|
 | grouping by entity / classification             | merging similar facts, canonical statements      |
 | the timeline (event memories, message order)    | themes, classification of merged facts           |
-| colour tags                                     | relationships and their type                     |
+| colour tags, the relationship map               | relationships: type (free text), polarity -3..3, intensity, trend |
+| witnesses, major events, recent tone            | character insights: traits, habits, stressors, motivations, arc |
 | scheduling (`schedule.js`)                      | contradictions                                   |
+| linking names to objects (and their types)      | threads and quests (status, progress), world entries by kind |
 
-**Incremental.** A compiled state - `{ facts, relationships, included:
-[memory ids], compiledAt }`, one JSON file per chat
+Polarity is a whole number from -3 (hostile) to 3 (devoted) with a word
+per step, and intensity low / medium / high: models keep to a few named
+steps far better than to a fine-grained number. Relationship *type* is the
+model's own words, never a fixed list. An empty answer for a list that had
+items is taken as the model leaving it out, and the previous list is kept
+(facts keep their stricter rule, below).
+
+**Linking.** Every compiled entity is `{ id, name, type }`: a name that
+matches a State Engine object (by name or alias, any object type) gets its
+id and object type. A thread whose title names an object - a quest - is
+linked to it; so is a world entry naming a location, faction or item.
+`dossier.js` goes the other way: `getEntityDossier()` gathers an object's
+profile, relationships, threads and quests, world entries, secrets it
+knows, and the memories about it or witnessed by it.
+
+**Incremental.** A compiled state - `{ facts, relationships, characters,
+threads, world, included: [memory ids], compiledAt, schema }`, one JSON file
+per chat
 (`archivist-compiled-...json`, next to the memories) - is updated by handing
 the model the current facts (`[f3] PERMANENT · employment · about Lucian:
 ...`) and relationships plus only the memories not `included` yet (`[m1]`,
@@ -251,6 +289,10 @@ refs back to memory ids, resolves entity names to State Engine object ids,
 and refuses an answer that would drop every fact (the previous state is
 kept). Rebuild starts from an empty state. The state is saved after every
 batch.
+
+A state compiled before the world compiler (no `schema`, read as 1) still
+works; its view is flagged `outdated` - a Rebuild fills in insights, threads
+and the world for every memory, not just the new ones.
 
 **The view** (`buildCompiledView()`, what `getCompiledMemory()` returns) is
 built against the chat's memories as they are now: facts resting only on
@@ -286,7 +328,11 @@ them.
 - **Drawer** (`settings.html`, `src/ui/settings-drawer.js`) - the enable
   switch, status, Repair, the open chat's newest memories.
 - **Memory browser** (`src/ui/memory-browser.js`) - all chats, search,
-  filters, deletion. Deleting there (`deleteMemoryRecords()`,
+  filters (tag, and who it is about or who was present), deletion. Its
+  Compiled view shows the compiler's status line - running, done, or why
+  it failed - with Compile now and Rebuild, then characters, scene,
+  session, the relationship map and list, threads and quests, the world by
+  kind, and the timeline (major events, witnesses, tone). Deleting there (`deleteMemoryRecords()`,
   `deleteChatMemories()`) is the only way a stored memory is ever removed.
 
 What each shows is computed by plain functions (`drawer-model.js`,

@@ -105,16 +105,30 @@ Catch-up uses its own State Engine preset, **Archivist History Catch-Up**
 (an independent preset - it doesn't take part in the per-message update).
 It works whether or not *Enable Archivist* is on.
 
-### The compiler: profiles, scene, session, relationships, timeline
+### The compiler: characters, relationships, threads, the world, timeline
 
 Raw memories pile up and repeat themselves. The compiler turns a chat's
 memories into structured knowledge:
 
-- **Character profiles** - lasting facts, by character (and place, faction...)
+- **Characters** - lasting facts, by character (and place, faction...), and
+  what the memories reveal about each character: personality traits,
+  habits, stressors, motivations, their arc so far, how they feel lately
 - **Scene** - what holds in the immediate scene: arrivals, weather, transport
 - **Session** - what holds for this part of the story
-- **Relationships** - who trains, employs, distrusts whom
-- **Timeline** - the story's events, in order
+- **Relationships** - each direction of a pair: what the relationship is
+  (friend, mentor, colleague, rival... in the model's own words), its
+  polarity from -3 hostile to +3 devoted, its intensity (low / medium /
+  high) and whether it is warming or cooling - with a **relationship map**,
+  a grid of who feels what toward whom
+- **Story threads and quests** - plot hooks, unresolved threads, quest
+  seeds, with their status (open, active, resolved, abandoned) and progress
+- **The world** - secrets and who knows them, locations, factions and
+  groups, items, ongoing world events, lore and rules of the setting
+- **Timeline** - the story's events, in order: major ones marked, who
+  witnessed them, their tone, and when the message was written
+
+Every memory also records who was present, tags for prioritizing it
+(important, trivial, contextual, emotional) and its emotional tone.
 
 Memories saying the same thing are merged into one canonical fact ("Lucian
 works at Maple Heights gym", not five memories about shifts there), and facts
@@ -134,19 +148,30 @@ It doesn't run on every message. In the drawer's **Compiler** section:
   whole compiled list comes back each time, so give it room (default 3000).
 - **Compile now** - compile the new memories now. **Rebuild** - start over
   from every memory.
+- **Also compile story threads, quests and the world** - on by default; it
+  is a second model call per batch (the **Archivist World Compiler**
+  preset), so turn it off to save tokens.
 
 Each compile only sends the memories added since the last one, with the
 current compiled knowledge - so profiles stay stable and long chats stay
 cheap. A compile that fails, or whose answer would drop everything, leaves
 the previous result in place.
 
-See it in **Review memories -> Compiled**. Click a fact's *message #12* (or
+A chat compiled before characters, threads and the world existed says so
+in its Compiled view - **Rebuild** it to fill them in for the whole chat.
+
+See it in **Review memories -> Compiled** - its status line shows what the
+compiler is doing, or why the last compile failed, and **Compile now** and
+**Rebuild** work from there too. Click a fact's *message #12* (or
 *messages #3-8*) to jump to that part of the chat. A fact resting only on
 memories that are gone - a regenerated reply, another swipe - drops out of
 the view until they are back.
 
-The compiler uses its own State Engine preset, **Archivist Memory Compiler**
-(an independent preset).
+The compiler uses two State Engine presets of its own, **Archivist Memory
+Compiler** and **Archivist World Compiler** (independent presets). State
+Engine queues their runs, catch-up's and its own per-message update on the
+connection they share, one at a time - so a compile started while catch-up
+runs just waits its turn.
 
 ### The memory browser
 
@@ -154,8 +179,9 @@ Every chat Archivist holds memory for, grouped by character or group, on
 the left; the chosen chat on the right - its **Memories** (newest first), or
 its **Compiled** memory (see above).
 
-- **Search** the text and the names of who or what a memory is about;
-  **filter** by type, scope, importance or entity.
+- **Search** the text, the tone and the names of who or what a memory is
+  about; **filter** by type, scope, importance, tag, or entity (who it is
+  about or who was present).
 - **Delete** one memory (the bin on its row), the ones you tick
   (**Select shown** ticks everything the filters show), or **everything
   stored for a chat**. Each asks first; none can be undone.

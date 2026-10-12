@@ -61,6 +61,7 @@ describe('compilerLine', () => {
         expect(compilerLine(null, null).text).toBe('Not compiled yet.');
         expect(compilerLine({ running: true, batch: 2, batches: 3 }, null).text).toBe('Compiling - part 2 of 3...');
         expect(compilerLine({ running: true, rebuild: true, batches: 1 }, null).text).toBe('Rebuilding...');
+        expect(compilerLine({ running: true, batch: 1, batches: 2, part: 'world' }, null).text).toBe('Compiling - part 1 of 2 (threads and world)...');
         expect(compilerLine({ outcome: 'failed', error: 'model down' }, null)).toEqual({ text: 'The last compile failed: model down.', error: true });
         expect(compilerLine({ outcome: 'compiled' }, { at: '2026-10-11T12:00:00.000Z', pending: 0 }).text).toMatch(/^Compiled .+ · up to date\.$/);
         expect(compilerLine(null, { at: '2026-10-11T12:00:00.000Z', pending: 2 }).text).toMatch(/· 2 new memories since\.$/);

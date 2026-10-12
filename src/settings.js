@@ -39,6 +39,9 @@ const DEFAULTS = {
     // whole compiled list comes back each run.
     compilerConnectionProfileId: '',
     compilerMaxTokens: 3000,
+    // Also compile story threads, quests and the world (a second run per
+    // batch, through the World Compiler preset).
+    compileWorld: true,
     // Which version of the compiler preset's variables is installed.
     compilerVariableVersion: null,
 };

@@ -8,11 +8,28 @@ const base = { text: 'Mira hid the key.', chat_id: 'Chat A', source_message_id: 
 describe('createMemoryRecord', () => {
     it('builds a schema-valid record with every field', () => {
         const record = createMemoryRecord({ ...base, subtype: 'secret', scope: 'long_term', importance: 'high', entity_ids: ['chr_mira', 'itm_key'] });
-        expect(Object.keys(record).sort()).toEqual(['chat_id', 'created_at', 'entity_ids', 'id', 'importance', 'scope', 'source_message_id', 'subtype', 'text']);
+        expect(Object.keys(record).sort()).toEqual([
+            'chat_id', 'created_at', 'entity_ids', 'entity_types', 'id', 'importance', 'scope', 'source_message_id', 'subtype', 'tags', 'text', 'tone', 'witness_ids',
+        ]);
         expect(record).toMatchObject({ subtype: 'secret', scope: 'long_term', importance: 'high', entity_ids: ['chr_mira', 'itm_key'] });
         expect(record.id).toMatch(/^mem_[0-9a-f]{20}$/);
         expect(new Date(record.created_at).toISOString()).toBe(record.created_at);
         expect(isMemoryRecord(record)).toBe(true);
+    });
+
+    it('keeps who was present, the known tags, the tone and the object types', () => {
+        const record = createMemoryRecord({
+            ...base, witness_ids: ['chr_mira', '', 'chr_mira', 'chr_tom'], tags: 'Important, nonsense, emotional', tone: '  Tense ', entity_types: { chr_mira: 'character', bad: 3 },
+        });
+        expect(record).toMatchObject({ witness_ids: ['chr_mira', 'chr_tom'], tags: ['important', 'emotional'], tone: 'tense', entity_types: { chr_mira: 'character' } });
+        expect(isMemoryRecord(record)).toBe(true);
+    });
+
+    it('still accepts a record from before those fields existed, but not one with them malformed', () => {
+        const { witness_ids: _w, tags: _t, tone: _o, entity_types: _e, ...old } = createMemoryRecord(base);
+        expect(isMemoryRecord(old)).toBe(true);
+        expect(isMemoryRecord({ ...old, tags: 'important' })).toBe(false);
+        expect(isMemoryRecord({ ...old, witness_ids: [3] })).toBe(false);
     });
 
     it('keeps a given id and created_at', () => {

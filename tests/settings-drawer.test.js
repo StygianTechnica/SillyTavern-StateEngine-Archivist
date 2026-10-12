@@ -170,7 +170,10 @@ describe('the Archivist drawer', () => {
         $('ar_compile_auto').dispatchEvent(new Event('change'));
         $('ar_compile_threshold').value = '25';
         $('ar_compile_threshold').dispatchEvent(new Event('change'));
-        expect(getSettings()).toMatchObject({ compileAuto: false, compileThreshold: 25 });
+        expect($('ar_compile_world').checked).toBe(true);
+        $('ar_compile_world').checked = false;
+        $('ar_compile_world').dispatchEvent(new Event('change'));
+        expect(getSettings()).toMatchObject({ compileAuto: false, compileThreshold: 25, compileWorld: false });
     });
 
     it('follows chat changes', async () => {

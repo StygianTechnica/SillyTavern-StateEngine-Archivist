@@ -152,6 +152,12 @@ function wireCompiler() {
         getSettings().compileAuto = auto.checked;
         saveSettings();
     });
+    const world = byId('ar_compile_world');
+    world.checked = getSettings().compileWorld !== false;
+    world.addEventListener('change', () => {
+        getSettings().compileWorld = world.checked;
+        saveSettings();
+    });
     bindNumber('ar_compile_threshold', 'compileThreshold', 1, 200);
     bindNumber('ar_compile_interval', 'compileIntervalMinutes', 1, 1440);
     bindNumber('ar_compile_gap', 'compileMinGapMinutes', 0, 1440);

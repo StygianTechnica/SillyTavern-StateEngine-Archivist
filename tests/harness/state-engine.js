@@ -119,8 +119,8 @@ export function createFakeStateEngine() {
         // What State Engine's run does, with the model played by
         // fakeEngine.respond(context, { chatId, preset }): it returns the
         // list to write into the preset's first prompted variable, an object
-        // { qualifiedName: value } for several, 'busy' (another
-        // independent preset is running), or throws (the model call failed).
+        // { qualifiedName: value } for several, or throws (the model call
+        // failed).
         async runIndependentPreset(extensionId, instanceId, chatId, ref) {
             const p = preset(ref.namespace, ref.name);
             log('runIndependentPreset', [chatId, ref, p?.independentConfig?.context]);
@@ -133,13 +133,10 @@ export function createFakeStateEngine() {
                 record({ lastOutcome: 'skipped-parse-error', lastError: err.message });
                 return false;
             }
-            if (answer === 'busy') {
-                record({ lastOutcome: 'skipped-in-progress', lastError: null });
-                return false;
-            }
             // A list fills the preset's first variable; an object maps
             // qualified variable names to values.
-            const writes = Array.isArray(answer) ? [[[...p.variables.keys()][0], answer]] : Object.entries(answer ?? {});
+            // Like State Engine, only the preset's own variables are written.
+            const writes = Array.isArray(answer) ? [[[...p.variables.keys()][0], answer]] : Object.entries(answer ?? {}).filter(([q]) => p.variables.has(q));
             for (const [q, value] of writes) values.set(`${chatId}|${q}`, structuredClone(value));
             announce(chatId);
             record({ lastOutcome: 'updated', lastError: null });

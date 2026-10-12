@@ -30,9 +30,9 @@ describe('memory browser model', () => {
         expect(groups[1].chats[0].open).toBe(true);
     });
 
-    it('offers each subtype and entity once, sorted', () => {
-        const records = [rec('a', { subtype: 'secret', entity_ids: ['chr_b', 'chr_a'] }), rec('b', { entity_ids: ['chr_a'] })];
-        expect(filterChoices(records)).toEqual({ subtypes: ['event', 'secret'], entities: ['chr_a', 'chr_b'] });
+    it('offers each subtype, entity (witnesses too) and tag once, sorted', () => {
+        const records = [rec('a', { subtype: 'secret', entity_ids: ['chr_b', 'chr_a'], tags: ['important'] }), rec('b', { entity_ids: ['chr_a'], witness_ids: ['chr_c'], tags: ['emotional', 'important'] })];
+        expect(filterChoices(records)).toEqual({ subtypes: ['event', 'secret'], entities: ['chr_a', 'chr_b', 'chr_c'], tags: ['emotional', 'important'] });
     });
 
     it('filters by every field, newest first, searching text and entity names', () => {
@@ -50,6 +50,10 @@ describe('memory browser model', () => {
         expect(ids({ search: 'KEY' })).toEqual(['one']);
         expect(ids({ search: 'rusty' }, new Map([['loc_inn', 'The Rusty Anchor']]))).toEqual(['three']);
         expect(ids({ search: 'storm', importance: 'high' })).toEqual([]);
+        const tagged = [rec('t', { tags: ['emotional'], tone: 'tender', witness_ids: ['chr_kael'] }), ...records];
+        expect(filterRecords(tagged, { tag: 'emotional' }).map((r) => r.id)).toEqual(['t']);
+        expect(filterRecords(tagged, { entity: 'chr_kael' }).map((r) => r.id)).toEqual(['t']);
+        expect(filterRecords(tagged, { search: 'tender' }).map((r) => r.id)).toEqual(['t']);
     });
 
     it('labels sources and dates for people', () => {
@@ -203,11 +207,14 @@ describe('the memory browser window', () => {
         getContext().executeSlashCommandsWithOptions = vi.fn(async () => ({}));
 
         await openMemoryBrowser({ view: 'compiled' });
-        // Two facts, one relationship, and the one event memory on the timeline.
-        await waitFor(() => expect(qa('.ar-mb-fact')).toHaveLength(4));
+        // Two facts, the relationship (in Mira's profile and in the list), and
+        // the one event memory on the timeline.
+        await waitFor(() => expect(qa('.ar-mb-fact')).toHaveLength(5));
         expect(qa('.ar-mb-timeline .ar-mb-record-text').map((n) => n.textContent)).toEqual(['They reached the inn.']);
         const chips = qa('.ar-mb-chip').map((c) => c.textContent);
-        expect(chips).toEqual(['Permanent', 'Scene', 'Relationship']);
+        expect(chips).toEqual(['Permanent', 'Relationship', 'Scene', 'Relationship']);
+        expect(q('.ar-mb-map')).not.toBeNull();
+        expect(q('.ar-mb-map td[data-sign]').textContent).toBe('distrusts');
         expect(q('.ar-mb-profile .ar-mb-owner-name').textContent).toBe('Mira');
         const link = q('[data-mb-jump]');
         expect(link.textContent).toBe('message #3');
@@ -222,6 +229,26 @@ describe('the memory browser window', () => {
         await openMemoryBrowser({ view: 'compiled' });
         await waitFor(() => expect(q('.ar-mb-records .ar-mb-empty').textContent).toMatch(/^Not compiled yet/));
         expect(q('[data-mb="compileNow"]')).not.toBeNull();
+    });
+
+    it('compiles when Compile now is clicked, and shows the result', async () => {
+        fake.respond = async () => ({ archivist__compiled_facts: [{ text: 'Mira keeps secrets.', classification: 'PERMANENT', entities: ['Mira'], sources: ['m1'] }] });
+        await openMemoryBrowser({ view: 'compiled' });
+        await waitFor(() => expect(q('[data-mb="compileNow"]')).not.toBeNull());
+        q('[data-mb="compileNow"] span').click();
+        await waitFor(() => expect(q('.ar-mb-profile .ar-mb-owner-name')?.textContent).toBe('Mira'));
+        expect(q('[data-mb="compileStatus"]').textContent).toMatch(/^Compiled .+ up to date\.$/);
+        expect(q('[data-mb="compileRebuild"]')).not.toBeNull();
+    });
+
+    it('shows a failed compile in the window, instead of doing nothing', async () => {
+        fake.respond = async () => { throw new Error('model down'); };
+        await openMemoryBrowser({ view: 'compiled' });
+        await waitFor(() => expect(q('[data-mb="compileNow"]')).not.toBeNull());
+        q('[data-mb="compileNow"]').click();
+        await waitFor(() => expect(q('[data-mb="compileStatus"]').textContent).toBe('The last compile failed: model down.'));
+        expect(q('[data-mb="compileStatus"]').classList.contains('ar-mb-compile-error')).toBe(true);
+        expect(q('[data-mb="compileNow"]').disabled).toBe(false);
     });
 
     it('says so when nothing is stored at all', async () => {

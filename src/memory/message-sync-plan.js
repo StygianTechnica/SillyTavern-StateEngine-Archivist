@@ -27,6 +27,17 @@ export function parseSource(sourceMessageId) {
     return match ? { index: Number(match[1]), stamp: match[2] } : null;
 }
 
+// When a memory's message was written in the chat (its send_date): an ISO
+// timestamp when it reads as a date, else the stamp as SillyTavern wrote
+// it (older chats used "October 12, 2026 7:24am"), or null when unknown.
+// This is real time - not the story's own clock.
+export function messageDateOf(record) {
+    const stamp = parseSource(record?.source_message_id)?.stamp;
+    if (!stamp) return null;
+    const time = Date.parse(stamp);
+    return Number.isNaN(time) ? stamp : new Date(time).toISOString();
+}
+
 // Every send_date in `chat` -> where it is: [{ index, current }] (current:
 // the message's shown swipe, or a message without swipes).
 function stampsOf(chat) {

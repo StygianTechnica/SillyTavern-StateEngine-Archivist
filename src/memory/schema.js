@@ -10,6 +10,22 @@
 //   created_at         string     ISO timestamp
 //   importance         string     low | medium | high
 //
+// Optional - added 2026-10-12, so older records don't have them (read them
+// with `?? []` / `?? {}` / `?? ''`); createMemoryRecord() always writes them:
+//
+//   witness_ids        string[]   State Engine object ids of the characters
+//                                 present - who saw it happen or heard it
+//   tags               string[]   any of important | trivial | contextual |
+//                                 emotional (MEMORY_TAGS) - for prioritizing
+//   tone               string     its emotional tone, a word or two ('' if none)
+//   entity_types       object     { object id: object type } for every id in
+//                                 entity_ids and witness_ids ('character',
+//                                 'location'...) - which kind of object each is
+//
+// When the chat message was written is not stored again: it is the
+// send_date inside source_message_id (messageDateOf() in
+// src/memory/message-sync-plan.js).
+//
 // createMemoryRecord() is the only way Archivist builds a record, so every
 // record it writes passes isMemoryRecord(). Records read back from a file
 // are checked with isMemoryRecord() before they are indexed or returned.
@@ -20,6 +36,10 @@ export const IMPORTANCE_LEVELS = Object.freeze(['low', 'medium', 'high']);
 // Subtypes the extraction prompt offers. Subtype is an open string (the
 // spec's "etc."), so this list is a suggestion, not a whitelist.
 export const KNOWN_SUBTYPES = Object.freeze(['event', 'fact', 'relationship', 'secret']);
+
+// Prioritization tags. Only these are kept - a closed list, so they can be
+// filtered on.
+export const MEMORY_TAGS = Object.freeze(['important', 'trivial', 'contextual', 'emotional']);
 
 // Fallbacks for a missing or unrecognized value.
 export const DEFAULT_SUBTYPE = 'fact';
@@ -63,6 +83,29 @@ export function normalizeEntityIds(value) {
     return [...new Set(value.filter(isNonEmptyString).map((id) => id.trim()))];
 }
 
+// The known tags in `value` (a list or a comma-separated string), in
+// MEMORY_TAGS order.
+export function normalizeTags(value) {
+    const list = typeof value === 'string' ? value.split(',') : (Array.isArray(value) ? value : []);
+    const tokens = new Set(list.map(toToken));
+    return MEMORY_TAGS.filter((tag) => tokens.has(tag));
+}
+
+// A short tone: trimmed, lower case, at most 40 characters ('' if none).
+export function normalizeTone(value) {
+    return typeof value === 'string' ? value.trim().toLowerCase().slice(0, 40) : '';
+}
+
+// { id: type } with non-empty string keys and values only.
+export function normalizeEntityTypes(value) {
+    const out = {};
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return out;
+    for (const [id, type] of Object.entries(value)) {
+        if (isNonEmptyString(id) && isNonEmptyString(type)) out[id.trim()] = type.trim();
+    }
+    return out;
+}
+
 // Builds a schema-valid record from loose fields, or returns null when a
 // field with no sensible fallback is missing (text, chat_id,
 // source_message_id). id and created_at are generated when not given.
@@ -81,6 +124,10 @@ export function createMemoryRecord(fields) {
         chat_id: chatId,
         created_at: isNonEmptyString(fields.created_at) ? fields.created_at : new Date().toISOString(),
         importance: normalizeImportance(fields.importance),
+        witness_ids: normalizeEntityIds(fields.witness_ids),
+        tags: normalizeTags(fields.tags),
+        tone: normalizeTone(fields.tone),
+        entity_types: normalizeEntityTypes(fields.entity_types),
     };
 }
 
@@ -98,5 +145,10 @@ export function isMemoryRecord(record) {
         && isNonEmptyString(record.source_message_id)
         && isNonEmptyString(record.chat_id)
         && isNonEmptyString(record.created_at)
-        && IMPORTANCE_LEVELS.includes(record.importance);
+        && IMPORTANCE_LEVELS.includes(record.importance)
+        // The optional fields, when there.
+        && (record.witness_ids === undefined || (Array.isArray(record.witness_ids) && record.witness_ids.every((id) => typeof id === 'string')))
+        && (record.tags === undefined || (Array.isArray(record.tags) && record.tags.every((tag) => typeof tag === 'string')))
+        && (record.tone === undefined || typeof record.tone === 'string')
+        && (record.entity_types === undefined || (!!record.entity_types && typeof record.entity_types === 'object' && !Array.isArray(record.entity_types)));
 }

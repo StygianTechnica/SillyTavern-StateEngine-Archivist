@@ -2,12 +2,12 @@
 
 Archivist stores the memory records State Engine extracts from each chat
 and offers them to other extensions - Scenario Builder, Pretty Panels, or
-your own - through three read-only query APIs. Nothing outside Archivist
+your own - through read-only query APIs. Nothing outside Archivist
 writes memory: there is no API for adding, changing or deleting records.
 
 ## Reaching it
 
-Two ways, the same three functions either way:
+Two ways, the same functions either way:
 
 ```js
 // 1. The global, set once Archivist has started. Its presence is also the
@@ -49,6 +49,18 @@ MVP):
 | `chat_id`           | string     | The SillyTavern chat it belongs to                             |
 | `created_at`        | string     | ISO timestamp of when Archivist stored it                      |
 | `importance`        | string     | `low`, `medium` or `high`                                      |
+| `witness_ids`       | string[]   | Ids of the characters present - who saw or heard it (for a secret, who knows it) |
+| `tags`              | string[]   | Any of `important`, `trivial`, `contextual`, `emotional` - for prioritizing |
+| `tone`              | string     | Its emotional tone, a word or two (`tense`, `warm`...), `''` if none |
+| `entity_types`      | object     | `{ object id: object type }` for every id in `entity_ids` and `witness_ids` (`character`, `location`, `quest`...) |
+
+The last four were added in October 2026: records stored before have none
+of them, so read them with `?? []`, `?? ''` and `?? {}`.
+
+**When the message was written** is not a field of its own - it is the
+`send_date` at the end of `source_message_id` (real time, not the story's
+own clock). The compiled view hands it out as `message_date` on timeline
+entries and `source_messages`.
 
 Every record handed out is a **copy** - changing it changes nothing in
 Archivist.
@@ -113,12 +125,35 @@ guide): `null` when it was never compiled. `chat_id` works as for
 {
   compiledAt,                  // ISO time of the last compile
   pending,                     // memories stored since, not compiled in yet
-  character_profiles: [{ entity_id, name, facts: [fact] }],   // PERMANENT facts, by entity
+  outdated,                    // true: compiled before insights, threads and the world
+                               // existed - a Rebuild fills them in for the whole chat
+  character_profiles: [profile],
   scene_state: [fact],         // SCENE facts
   session_details: [fact],     // SESSION facts
   relationships: [relationship],
-  timeline: [{ memory_id, text, entity_ids, message_index, source_message_id,
-               chat_id, scope, importance, created_at }],     // event memories, story order
+  relationship_map: {          // a grid: who feels what toward whom
+    entities: [entity],
+    cells: [{ from, to, polarity, polarity_label, type, intensity, trend }],
+  },
+  threads: [thread],           // plot hooks, unresolved threads, quest seeds; open first
+  quests: [thread],            // the threads that are quests (linked to a quest object, or kind "quest")
+  world: { secret: [entry], location: [entry], faction: [entry], item: [entry],
+           event: [entry], lore: [entry] },
+  timeline: [{ memory_id, text, entity_ids, witnesses: [{ id, name }], major, tags, tone,
+               message_index, message_date, source_message_id, chat_id, scope,
+               importance, created_at }],                     // event memories, story order
+  recent_tone: [{ tone, count }],                             // the newest memories' tones
+}
+
+entity = { id | null, name, type | null }   // a State Engine object (type: its object type),
+                                            // or a name the story uses that matches none
+
+profile = {
+  entity_id, entity_type, name,
+  facts: [fact],                            // its PERMANENT facts
+  traits, habits, stressors, motivations,   // [text] - inferred from the memories
+  arc, emotional_state,                     // text
+  relationships: [relationship & { direction: 'out' | 'in', other: entity }],
 }
 
 fact = {
@@ -136,12 +171,43 @@ fact = {
   message_range: { from, to } | null,                                   // message indexes
 }
 
-relationship = {
-  from: { id | null, name }, to: { id | null, name }, type, text,      // type: "trains", "distrusts"...
+relationship = {                            // one per direction: how "from" sees "to"
+  from: entity, to: entity, text,
+  type,                                     // the model's own words: friend, mentor, rival, boss...
+  polarity,                                 // -3..3: hostile, antagonistic, wary, neutral, friendly, close, devoted
+  polarity_label,                           // that word
+  intensity,                                // 'low' | 'medium' | 'high'
+  trend,                                    // 'warming' | 'cooling' | 'stable' | 'volatile' | ''
   tag, color_tag: 'Purple', color_name: 'Relationship', color_hex,
   chat_id, source_memory_ids, source_messages, message_range,
 }
+
+thread = {
+  id,                                       // "t2" - stable across compiles
+  kind,                                     // "plot hook", "unresolved thread", "quest seed", "quest"...
+  title, text,
+  status,                                   // 'open' | 'active' | 'resolved' | 'abandoned'
+  progress,                                 // what has happened with it so far
+  entity: entity | null,                    // the object its title names - a quest object
+  involved: [entity],
+  chat_id, source_memory_ids, source_messages, message_range,
+}
+
+entry = {                                   // a world entry
+  id,                                       // "w5"
+  kind,                                     // 'secret' | 'location' | 'faction' | 'item' | 'event' | 'lore'
+  name, text,
+  entity: entity | null,                    // the object it names (never for a secret)
+  known_by: [entity],                       // a secret: who knows it
+  involved: [entity],
+  status,                                   // an event: 'ongoing' | 'over'
+  chat_id, source_memory_ids, source_messages, message_range,
+}
 ```
+
+Polarity is a small whole-number scale with a word per step, and intensity
+three words, on purpose: models keep to named steps far more reliably than
+to a fine-grained number.
 
 Colours (`hex` is Archivist's, so every UI matches): Permanent `#4a90d9`
 blue, Session `#d4b03c` yellow, Scene `#4caf50` green, Relationship
@@ -172,7 +238,44 @@ eventSource.on(archivist.MEMORIES_CHANGED_EVENT, ({ chatId }) => {
 chat id); you can pass it to `getAllMemories()` too.
 
 After a compile, `COMPILED_CHANGED_EVENT` (`'archivist_compiled_changed'`),
-same payload - re-read `getCompiledMemory()`.
+same payload - re-read `getCompiledMemory()` (and any dossiers).
+
+## Linking objects to memory
+
+Memories and compiled items point at State Engine objects by id (and
+`entity_types` / `entity.type` say which kind of object). Two calls go the
+other way - from an object to everything Archivist knows about it:
+
+### `getEntityDossier(entity, chat_id?)` -> `Promise<dossier | null>`
+
+`entity` is an object id (`'chr_lucian'`), a name or alias (`'Lucian'`), or
+`{ id?, name? }`. `null` when the chat has no memories.
+
+```js
+{
+  entity,                 // { id | null, name, type | null }
+  compiledAt,             // null when never compiled - then only the memories are filled
+  profile,                // its character profile (insights, facts) or null
+  relationships,          // [relationship & { direction: 'out' | 'in', other }]
+  threads, quests,        // the threads it is in (a quest object: its own thread, with status and progress)
+  world,                  // world entries it is, is part of, or knows (a secret)
+  secrets_known,          // the secrets it knows
+  memories,               // memory records about it
+  witnessed,              // memory records it was present for
+  timeline,               // timeline events it is in or witnessed
+}
+```
+
+### `getRelationship(from, to, chat_id?)` -> `Promise<{ forward, backward } | null>`
+
+The compiled relationship from one to the other (`forward`) and back
+(`backward`), each a `relationship` or `null`. `null` when never compiled.
+
+```js
+// A character card: how this character feels about the user's persona.
+const { forward } = await archivist.getRelationship(characterId, SillyTavern.getContext().name1) ?? {};
+if (forward) showBadge(`${forward.type} · ${forward.polarity_label} · ${forward.intensity}`);
+```
 
 ## Examples
 
@@ -198,6 +301,8 @@ eventSource.on(archivist.MEMORIES_CHANGED_EVENT, () => void showLog());
 
 ## What Archivist does not do (yet)
 
-No relevance ranking, arcs, hooks, mysteries or dangers. Raw records are what
-the model extracted, stored as they came; the compiled memory is the one
-interpreted layer (profiles, relationships, a timeline, contradictions).
+No relevance ranking. Raw records are what the model extracted, stored as
+they came; the compiled memory is the one interpreted layer (profiles and
+insights, relationships, threads and quests, the world, a timeline,
+contradictions). Archivist never creates State Engine objects - a place or
+quest the story names that has no object stays a name.

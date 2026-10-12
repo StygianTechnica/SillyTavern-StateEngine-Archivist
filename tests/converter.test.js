@@ -13,7 +13,22 @@ describe('convertExtractedItems', () => {
         ], options);
         expect(fields).toEqual({
             text: 'Mira hid the key at the inn.', subtype: 'secret', scope: 'long_term', importance: 'high',
-            entity_ids: ['chr_mira', 'loc_inn'], source_message_id: 'Chat A#3@d',
+            entity_ids: ['chr_mira', 'loc_inn'], witness_ids: [], tags: undefined, tone: undefined, entity_types: {},
+            source_message_id: 'Chat A#3@d',
+        });
+    });
+
+    it('resolves who was present into witness_ids, and records each object type', async () => {
+        const typed = { mira: { id: 'chr_mira', type: 'character' }, tom: { id: 'chr_tom', type: 'character' }, 'the old inn': { id: 'loc_inn', type: 'location' } };
+        const [fields] = await convertExtractedItems([
+            { text: 'Mira hid the key.', entities: ['Mira', 'The Old Inn'], present: 'Mira, Tom, Nobody', tags: ['important', 'emotional'], tone: 'Tense' },
+        ], { ...options, resolveEntity: async (name) => typed[name.toLowerCase()] ?? null });
+        expect(fields).toMatchObject({
+            entity_ids: ['chr_mira', 'loc_inn'],
+            witness_ids: ['chr_mira', 'chr_tom'],
+            entity_types: { chr_mira: 'character', chr_tom: 'character', loc_inn: 'location' },
+            tags: ['important', 'emotional'],
+            tone: 'Tense',
         });
     });
 
@@ -50,9 +65,9 @@ describe('createEntityResolver', () => {
         const lookup = vi.fn(async (type, name) => (type === 'location' && name.toLowerCase() === 'inn' ? { id: 'loc_inn' } : null));
         const resolve = createEntityResolver(['character', 'location', 'item'], lookup);
 
-        expect(await resolve('Inn')).toBe('loc_inn');
+        expect(await resolve('Inn')).toEqual({ id: 'loc_inn', type: 'location' });
         expect(lookup.mock.calls.map(([type]) => type)).toEqual(['character', 'location']);
-        expect(await resolve('INN')).toBe('loc_inn');
+        expect(await resolve('INN')).toEqual({ id: 'loc_inn', type: 'location' });
         expect(lookup).toHaveBeenCalledTimes(2);
     });
 
@@ -61,7 +76,7 @@ describe('createEntityResolver', () => {
             if (type === 'character') throw new Error('boom');
             return { id: 'itm_key' };
         });
-        expect(await resolve('key')).toBe('itm_key');
+        expect(await resolve('key')).toEqual({ id: 'itm_key', type: 'item' });
     });
 
     it('resolves to null when nothing matches', async () => {

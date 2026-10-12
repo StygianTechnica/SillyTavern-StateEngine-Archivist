@@ -62,7 +62,8 @@ export function compilerLine(status, compiled) {
     const time = (iso) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     if (status?.running) {
         const part = status.batches > 1 ? ` - part ${status.batch} of ${status.batches}` : '';
-        return { text: `${status.rebuild ? 'Rebuilding' : 'Compiling'}${part}...`, error: false };
+        const world = status.part === 'world' ? ' (threads and world)' : '';
+        return { text: `${status.rebuild ? 'Rebuilding' : 'Compiling'}${part}${world}...`, error: false };
     }
     if (status?.outcome === 'failed') return { text: `The last compile failed: ${status.error || 'see the browser console'}.`, error: true };
     if (!compiled) return { text: 'Not compiled yet.', error: false };

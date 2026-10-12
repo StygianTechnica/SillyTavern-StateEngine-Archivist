@@ -11,7 +11,7 @@ import { sourceMessageId } from '../src/extraction/messages.js';
 import { uncoveredIndexes, toChunks, carryOver, chunkContext, sourceIndexFor, MAX_MESSAGE_CHARS } from '../src/extraction/catch-up-plan.js';
 import {
     startCatchUp, cancelCatchUp, getCatchUpProgress, onCatchUpProgress, isCatchUpRunning,
-    CATCH_UP_PRESET, CATCH_UP_HEADER, BUSY_RETRY_MS,
+    CATCH_UP_PRESET, CATCH_UP_HEADER,
 } from '../src/extraction/catch-up.js';
 
 vi.mock('../src/api/state-engine.js', () => import('./harness/state-engine-mock.js'));
@@ -183,22 +183,6 @@ describe('the catch-up pass', () => {
         fake.respond = async () => { throw new Error('no connection'); };
         await run();
         expect(passes[0]).toMatchObject({ outcome: 'failed', failedChunks: 3, lastError: 'no connection' });
-    });
-
-    it('waits and retries while another independent preset is running', async () => {
-        vi.useFakeTimers();
-        try {
-            let busy = 2;
-            const respond = fake.respond;
-            fake.respond = async (context) => (busy-- > 0 ? 'busy' : respond(context));
-            const done = [];
-            await startCatchUp({ whenDone: (p) => done.push(p) });
-            await vi.advanceTimersByTimeAsync(BUSY_RETRY_MS * 3);
-            await done[0];
-            expect(getCatchUpProgress()).toMatchObject({ outcome: 'completed', failedChunks: 0, stored: 3 });
-        } finally {
-            vi.useRealTimers();
-        }
     });
 
     it('stops between chunks when cancelled, keeping what it stored', async () => {

@@ -28,7 +28,7 @@ import { getSettings, saveSettings } from '../settings.js';
 import { findPreset } from '../api/presets.js';
 import { getVariable, createVariable, updateVariable, getVariableValue, setVariableValue } from '../api/variables.js';
 import { createIndependentPreset, configureIndependentPreset, updateIndependentPresetContext } from '../api/independent-presets.js';
-import { runIndependentWithRetry } from './independent-run.js';
+import { runIndependent } from './independent-run.js';
 import { listObjectTypeIds, getObjectByAlias } from '../api/objects.js';
 import { addMemoryRecords, getAllMemories } from '../memory/archivist.js';
 import { getCurrentChatRef, chatKeyFor, getChatEntry, ensureChatEntry, updateChatEntry } from '../memory/registry.js';
@@ -41,8 +41,8 @@ import { rememberExtracted } from '../memory/message-fingerprints.js';
 export const CATCH_UP_PRESET = 'Archivist History Catch-Up';
 
 // Raised whenever memoryVariableDef('catch-up') or the header changes (see
-// LIVE_VARIABLE_VERSION in live.js for why).
-export const CATCH_UP_VARIABLE_VERSION = 1;
+// LIVE_VARIABLE_VERSION in live.js for why). 2: present, tags, tone.
+export const CATCH_UP_VARIABLE_VERSION = 2;
 
 // The catch-up run's system header (State Engine's own talks about "a
 // recent conversation excerpt" and "the most recent roleplay message",
@@ -54,9 +54,6 @@ export const CATCH_UP_HEADER = [
     'Read every message given, evaluate each variable according to its conditions and return the required JSON output.',
     '',
 ].join('\n');
-
-// Waiting out another independent preset - shared with the compiler.
-export { BUSY_RETRY_MS, BUSY_RETRIES } from './independent-run.js';
 
 // ---------------------------------------------------------------- the preset
 
@@ -131,10 +128,10 @@ function snapshotChat() {
     }));
 }
 
-// Runs the preset for one chunk, waiting while another independent preset
-// runs. Resolves to { ok, error }.
+// Runs the preset for one chunk (State Engine queues it behind other runs
+// on the same connection). Resolves to { ok, error }.
 function runChunk(chatId) {
-    return runIndependentWithRetry(CATCH_UP_PRESET, chatId, () => cancelRequested);
+    return runIndependent(CATCH_UP_PRESET, chatId);
 }
 
 // One run of the catch-up preset at a time - a pass's chunks and an edited

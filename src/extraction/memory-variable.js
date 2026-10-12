@@ -22,7 +22,7 @@
 // message. Small concrete details are stored as "low" importance instead -
 // importance and the memory browser are how they are sorted out later.
 
-import { KNOWN_SUBTYPES } from '../memory/schema.js';
+import { KNOWN_SUBTYPES, MEMORY_TAGS } from '../memory/schema.js';
 
 // The live preset's variable, and the catch-up preset's - State Engine
 // variable names are unique across presets, so they differ.
@@ -35,7 +35,10 @@ const ITEM_SHAPE = [
     `"subtype": one of ${KNOWN_SUBTYPES.join(', ')} (or another single word if none fits);`,
     '"scope": "scene" (matters only for the current scene), "session" (matters for this part of the story) or "long_term" (should be remembered from now on);',
     '"importance": "low", "medium" or "high";',
-    '"entities": the names of the characters, places, factions, items, creatures and lore involved, exactly as the story names them}.',
+    '"entities": the names of the characters, places, factions, items, creatures and lore involved, exactly as the story names them;',
+    '"present": the names of the characters present who saw or heard it (for a secret, only those who know it);',
+    `"tags": any of ${MEMORY_TAGS.map((t) => `"${t}"`).join(', ')} that apply - important (matters for the story going forward), trivial (a passing detail), contextual (background that explains other things), emotional (a feeling or emotional moment);`,
+    '"tone": its emotional tone in a word or two, such as tense, warm, playful, somber}.',
 ].join(' ');
 
 // What to look for - shared by both modes.
