@@ -1,4 +1,4 @@
-import { statusLine, chatSummary, recentMemories, memoryView, compilerLine, RECENT_COUNT } from '../src/ui/drawer-model.js';
+import { statusLine, chatSummary, recentMemories, memoryView, compilerLine, RECENT_COUNT, updateTokenLimit, tokenLimitLine } from '../src/ui/drawer-model.js';
 
 describe('statusLine', () => {
     it('says off while disabled, whatever the health', () => {
@@ -65,5 +65,22 @@ describe('compilerLine', () => {
         expect(compilerLine({ outcome: 'failed', error: 'model down' }, null)).toEqual({ text: 'The last compile failed: model down.', error: true });
         expect(compilerLine({ outcome: 'compiled' }, { at: '2026-10-11T12:00:00.000Z', pending: 0 }).text).toMatch(/^Compiled .+ · up to date\.$/);
         expect(compilerLine(null, { at: '2026-10-11T12:00:00.000Z', pending: 2 }).text).toMatch(/· 2 new memories since\.$/);
+    });
+});
+
+describe('the token limit warning', () => {
+    it('reads the limit State Engine runs its update with', () => {
+        expect(updateTokenLimit(undefined)).toBe(300);
+        expect(updateTokenLimit({ responseLength: 800 })).toBe(800);
+        expect(updateTokenLimit({ responseLength: 800, stateEngineProfileId: 'p', stateEngineMaxTokens: 1500 })).toBe(1500);
+        expect(updateTokenLimit({ responseLength: 800, stateEngineProfileId: 'p', stateEngineMaxTokens: null })).toBe(800);
+        expect(updateTokenLimit({ responseLength: 800, stateEngineMaxTokens: 1500 })).toBe(800);
+    });
+
+    it('warns while Archivist is on and the limit is too small', () => {
+        expect(tokenLimitLine({ responseLength: 300 }, true)).toEqual({ text: expect.stringMatching(/limited to 300 tokens \(Max response length/), error: true });
+        expect(tokenLimitLine({ responseLength: 300, stateEngineProfileId: 'p', stateEngineMaxTokens: 400 }, true).text).toContain("connection profile's Max tokens");
+        expect(tokenLimitLine({ responseLength: 1200 }, true).text).toBe('');
+        expect(tokenLimitLine({ responseLength: 300 }, false).text).toBe('');
     });
 });

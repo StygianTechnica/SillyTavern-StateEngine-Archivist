@@ -149,10 +149,14 @@ The variable is only rewritten when `LIVE_VARIABLE_VERSION` goes up, so a
 user's own edits to its instructions survive reloads - until an Archivist
 update raises the version, which replaces them once.
 
-State Engine's own max-tokens setting caps the whole update response, memory
-included: a few memories add 70-110 tokens each (with who was present, tags
-and tone), and a cut-off response loses the whole update, not just the
-memories. Around 1000-1200 leaves room.
+State Engine's own *Max response length* (default 300; or its connection
+profile's *Max tokens*) caps the whole update response, memory included: a
+memory adds 50-110 tokens. So the live variable asks for at most 4 memories,
+lets the model leave out present / tags / tone when they add nothing, and is
+ANSWER LAST (`prompted.answerLast`): asked after the user's own variables.
+State Engine keeps every value an answer finished before being cut off, so
+a cut-off answer loses memories rather than the rest of the update. The
+drawer warns while the limit is under 1000; around 1000-1200 leaves room.
 
 ### Self-repair
 

@@ -15,6 +15,31 @@ export function statusLine(health, enabled) {
     return { text: 'On - memories are stored from each AI reply.', error: false };
 }
 
+// State Engine's answer size below this leaves too little room for the
+// memories next to the other variables of the per-message update.
+export const MIN_RESPONSE_TOKENS = 1000;
+
+// The token limit State Engine's per-message update runs with, from its
+// settings (extensionSettings.state_engine): its connection profile's Max
+// tokens when it uses one and that is set, else Max response length
+// (default 300) - the same order State Engine's background-llm.js uses.
+export function updateTokenLimit(seSettings) {
+    if (seSettings?.stateEngineProfileId && Number(seSettings.stateEngineMaxTokens) > 0) return Number(seSettings.stateEngineMaxTokens);
+    return Number(seSettings?.responseLength) || 300;
+}
+
+// A warning while Archivist is on and that limit is too small: { text,
+// error } ('' when fine).
+export function tokenLimitLine(seSettings, enabled) {
+    const limit = updateTokenLimit(seSettings);
+    if (!enabled || limit >= MIN_RESPONSE_TOKENS) return { text: '', error: false };
+    const where = seSettings?.stateEngineProfileId && Number(seSettings.stateEngineMaxTokens) > 0 ? 'its connection profile\'s Max tokens' : 'Max response length';
+    return {
+        text: `State Engine's answers are limited to ${limit} tokens (${where}, in State Engine's settings). Memories need room next to your other variables - an answer cut off at the limit loses whatever it was still writing. Around ${MIN_RESPONSE_TOKENS}-1200 is safer.`,
+        error: true,
+    };
+}
+
 // The "Last update" line, from getLastHarvest() (src/extraction/live.js):
 // { text, error }.
 export function lastHarvestLine(last, enabled) {

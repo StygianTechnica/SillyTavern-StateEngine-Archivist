@@ -50,7 +50,8 @@ const OLD_LIVE_PRESET_NAMES = ['Live'];
 // alone, keeping any edits the user made in State Engine's manager.
 // 2: NEW EACH TURN, and a lower bar for what counts as a memory.
 // 3: who was present, prioritization tags, emotional tone.
-export const LIVE_VARIABLE_VERSION = 3;
+// 4: at most LIVE_MAX_MEMORIES, optional present/tags/tone, ANSWER LAST.
+export const LIVE_VARIABLE_VERSION = 4;
 
 const harvests = new Map(); // chatId -> { running, again, retry: items[] }
 

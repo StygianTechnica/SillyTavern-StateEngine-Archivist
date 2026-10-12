@@ -118,6 +118,15 @@ describe('memoryVariableDef', () => {
         expect(memoryVariableDef('catch-up').prompted.newEachTurn).toBe(true);
     });
 
+    it('keeps live memories short and asks for them last, so a cut-off answer keeps the other variables', () => {
+        const live = memoryVariableDef('live').prompted;
+        expect(live.answerLast).toBe(true);
+        expect(live.instructions).toContain('at most 4');
+        expect(live.instructions).toContain('Leave out "present", "tags" and "tone" when they add nothing.');
+        expect(memoryVariableDef('catch-up').prompted.answerLast).toBeUndefined();
+        expect(memoryVariableDef('catch-up').prompted.instructions).not.toContain('at most');
+    });
+
     it('asks for small concrete details as low importance, and [] only when nothing happens', () => {
         for (const mode of ['live', 'catch-up']) {
             const text = memoryVariableDef(mode).prompted.instructions;

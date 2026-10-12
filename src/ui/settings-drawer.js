@@ -10,7 +10,7 @@ import { getSettings, saveSettings } from '../settings.js';
 import { getAllMemories, MEMORIES_CHANGED_EVENT } from '../memory/archivist.js';
 import { getCurrentChatRef, chatKeyFor } from '../memory/registry.js';
 import { getLiveHealth, onLiveHealthChange, repairLiveExtraction, setArchivistEnabled, getLastHarvest, onHarvest } from '../extraction/live.js';
-import { statusLine, chatSummary, recentMemories, memoryView, lastHarvestLine, catchUpLine, compilerLine } from './drawer-model.js';
+import { statusLine, chatSummary, recentMemories, memoryView, lastHarvestLine, catchUpLine, compilerLine, tokenLimitLine } from './drawer-model.js';
 import { startCatchUp, cancelCatchUp, getCatchUpProgress, onCatchUpProgress, isCatchUpRunning } from '../extraction/catch-up.js';
 import { listConnectionProfiles } from './connection-profiles.js';
 import { openMemoryBrowser } from './memory-browser.js';
@@ -40,6 +40,11 @@ function renderStatus() {
     lastEl.textContent = last.text;
     lastEl.hidden = !last.text;
     lastEl.classList.toggle('ar-status-error', last.error);
+    const tokens = tokenLimitLine(SillyTavern.getContext().extensionSettings?.state_engine, enabled);
+    const tokensEl = byId('ar_token_warning');
+    tokensEl.textContent = tokens.text;
+    tokensEl.hidden = !tokens.text;
+    tokensEl.classList.toggle('ar-status-error', tokens.error);
 }
 
 function memoryRow(record) {
