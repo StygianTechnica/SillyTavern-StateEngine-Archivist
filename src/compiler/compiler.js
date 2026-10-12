@@ -32,7 +32,8 @@ import { getSettings, saveSettings } from '../settings.js';
 import { findPreset } from '../api/presets.js';
 import { getVariable, createVariable, updateVariable, getVariableValue, setVariableValue } from '../api/variables.js';
 import { createIndependentPreset, configureIndependentPreset, updateIndependentPresetContext } from '../api/independent-presets.js';
-import { listObjectTypeIds, getObjectByAlias, getObject } from '../api/objects.js';
+import { listObjectTypeIds, getObjectByAlias, getObject, listObjects } from '../api/objects.js';
+import { objectNameIndex, relinkCompiled, aliasSuggestions } from './entity-link.js';
 import { getAllMemories, MEMORIES_CHANGED_EVENT } from '../memory/archivist.js';
 import { getCurrentChatRef, chatKeyFor, getChatEntry, findChatEntriesById, updateChatEntry, compiledFileFor } from '../memory/registry.js';
 import { readJsonFile, writeJsonFile } from '../memory/storage.js';
@@ -54,7 +55,9 @@ export const WORLD_VARIABLE = 'compiled_world';
 // LIVE_VARIABLE_VERSION in src/extraction/live.js).
 // 2: character insights; relationship polarity, intensity, trend; the
 // world compiler.
-export const COMPILER_VARIABLE_VERSION = 2;
+// 3: suspicions are mystery threads; settled threads and world entries are
+// kept with a status (a secret kept / revealed / disproven), never dropped.
+export const COMPILER_VARIABLE_VERSION = 3;
 
 // New memories per compile run.
 export const COMPILE_BATCH = 60;
@@ -121,8 +124,9 @@ const CHARACTERS_INSTRUCTIONS = [
 ].join(' ');
 
 const THREADS_INSTRUCTIONS = [
-    'The COMPLETE updated list of story threads: plot hooks, unresolved narrative threads, open questions, promises, plans and quest seeds - anything set up that could be picked up later or is still open.',
-    'Keep the current ones, update their status and progress from the new memories, add new ones; keep a resolved thread, marked resolved.',
+    'The COMPLETE updated list of story threads: plot hooks, unresolved narrative threads, open questions, suspicions and theories, promises, plans and quest seeds - anything set up that could be picked up later or is still open.',
+    'A suspicion or theory (someone suspects, wonders, believes without proof) is a "mystery" thread, never a fact.',
+    'Keep the current ones, update their status and progress from the new memories, add new ones. Never drop a thread: when one is settled, mark it "resolved" and say how in its progress - a suspicion proven wrong is resolved too ("it turned out the gremlins were not involved").',
     'Each item is an object: {"id": the id of the current thread it continues, or t<number> for a new one;',
     '"kind": "plot hook", "unresolved thread", "quest seed", "quest", "mystery", "goal" or another short label;',
     '"title": a short name for it;',
@@ -135,13 +139,14 @@ const THREADS_INSTRUCTIONS = [
 
 const WORLD_INSTRUCTIONS = [
     'The COMPLETE updated list of what the memories establish about the world - keep the current entries, revised by the new memories, and add new ones. Record every place mentioned, and anything that appears more than once.',
+    'Never drop an entry: when the new memories show it no longer holds, keep it and change its "status".',
     'Each item is an object: {"id": the id of the current entry it continues, or w<number> for a new one;',
-    '"kind": "secret" (something hidden from some of the characters), "location" (any place - a building, a room, a street, a city), "faction" (a group, team, business, organization, gang, staff or crowd), "item" (an object that matters or keeps appearing), "event" (an ongoing world event or condition - weather, shortages, holidays, emergencies, local happenings) or "lore" (how the world works - rules, customs, cultural norms, recurring patterns);',
+    '"kind": "secret" (something true that is hidden from some of the characters - not a suspicion or a theory, which are story threads), "location" (any place - a building, a room, a street, a city), "faction" (a group, team, business, organization, gang, staff or crowd), "item" (an object that matters or keeps appearing), "event" (an ongoing world event or condition - weather, shortages, holidays, emergencies, local happenings) or "lore" (how the world works - rules, customs, cultural norms, recurring patterns);',
     '"name": its name, or a short label;',
     '"text": what is known about it;',
     '"known_by": for a secret, the names of the characters who know it ([] otherwise);',
     '"involved": the names of the characters, places, factions and things connected to it;',
-    '"status": for an event, "ongoing" or "over" ("" otherwise);',
+    '"status": for a secret, "kept" (still hidden), "revealed" (the characters it was hidden from know it now) or "disproven" (it turned out not to be true); for an event, "ongoing" or "over"; "" otherwise;',
     '"sources": the refs [m...] of the NEW memories it uses ([] if none)}.',
 ].join(' ');
 
@@ -276,9 +281,27 @@ function emitCompiled(chatKey, chatId) {
 
 // ------------------------------------------------------------ a run
 
-// Looks entity names up among State Engine's objects, for one chat.
+// Every object the chat sees, of every type: [{ id, name, aliases, type }].
+async function chatObjects(chatId, types) {
+    const objects = [];
+    for (const type of types) {
+        try {
+            for (const object of await listObjects(chatId, type)) objects.push({ ...object, type });
+        } catch {
+            // A type State Engine can't list: no loose matches for it.
+        }
+    }
+    return objects;
+}
+
+// Looks entity names up among State Engine's objects, for one chat: its
+// own name/alias match first, then the looser word match (entity-link.js
+// objectNameIndex) for names the model wrote differently from the object -
+// "gremlin (lead)" for "A lead gremlin". A loosely matched entity keeps the
+// model's name: it is offered as an alias (aliasSuggestions).
 export async function entityResolver(chatId) {
     const types = await listObjectTypeIds();
+    const loose = objectNameIndex(await chatObjects(chatId, types));
     const cache = new Map();
     const names = new Map();
     return {
@@ -299,7 +322,9 @@ export async function entityResolver(chatId) {
                     break;
                 }
             }
-            const entity = found?.id ? { id: found.id, name: found.name ?? name, type: foundType } : { id: null, name, type: null };
+            const near = found?.id ? null : loose(name);
+            const entity = found?.id ? { id: found.id, name: found.name ?? name, type: foundType }
+                : (near ? { id: near.id, name, type: near.type } : { id: null, name, type: null });
             cache.set(key, entity);
             return entity;
         },
@@ -508,11 +533,16 @@ export async function getCompiledMemory(chatId) {
     const chatKey = resolveChatKey(chatId);
     if (!chatKey) return null;
     try {
-        const compiled = await compiledFor(chatKey);
-        if (!compiled.compiledAt) return null;
+        const stored = await compiledFor(chatKey);
+        if (!stored.compiledAt) return null;
+        const sillyChatId = getChatEntry(chatKey).chatId;
+        // Names no object had when compiled may have one now.
+        const objects = await chatObjects(sillyChatId, await listObjectTypeIds());
+        const compiled = relinkCompiled(stored, objectNameIndex(objects));
         const records = await getAllMemories(chatKey);
-        const names = await witnessNames(getChatEntry(chatKey).chatId, records);
-        return structuredClone(buildCompiledView(compiled, records, (id) => names.get(id) ?? null));
+        const names = await witnessNames(sillyChatId, records);
+        const view = buildCompiledView(compiled, records, (id) => names.get(id) ?? null);
+        return structuredClone({ ...view, alias_suggestions: aliasSuggestions(compiled, objects) });
     } catch (err) {
         console.warn(LOG_PREFIX, `could not read the compiled memory of "${chatId ?? chatKey}"`, err);
         return null;

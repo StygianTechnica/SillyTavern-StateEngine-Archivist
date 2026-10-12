@@ -488,3 +488,9 @@
 .ar-mb-major {
     border-left-color: #e05555;
 }
+
+/* A world entry that no longer holds (a secret revealed or disproven, an
+   event over): kept for the story's history, shown settled. */
+.ar-mb-settled {
+    opacity: 0.6;
+}

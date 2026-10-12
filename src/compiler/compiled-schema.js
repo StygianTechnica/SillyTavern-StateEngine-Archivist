@@ -111,6 +111,19 @@ export function normalizeThreadStatus(value) {
 
 // ---- the world
 
+// A secret is kept (still hidden), revealed (those it was hidden from know
+// it now) or disproven (it turned out not to be true). Never dropped - its
+// status says it no longer holds. Anything unknown is kept.
+export const SECRET_STATUSES = Object.freeze(['kept', 'revealed', 'disproven']);
+
+export function normalizeSecretStatus(value) {
+    const token = String(value ?? '').trim().toLowerCase();
+    if (SECRET_STATUSES.includes(token)) return token;
+    if (/^(reveal|exposed|known|out|discovered|public)/.test(token)) return 'revealed';
+    if (/^(disprov|false|wrong|untrue|debunk|refuted|mistaken)/.test(token)) return 'disproven';
+    return 'kept';
+}
+
 // What a world entry is. A closed list, so a UI can group by it; near
 // words are mapped onto it, anything else is lore.
 export const WORLD_KINDS = Object.freeze(['secret', 'location', 'faction', 'item', 'event', 'lore']);

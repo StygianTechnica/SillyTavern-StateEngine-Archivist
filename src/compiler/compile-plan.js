@@ -38,7 +38,7 @@
 
 import {
     normalizeClassification, SCOPE_CLASSIFICATION, withColorTag, normalizePolarity, polarityLabel, normalizeIntensity, normalizeTrend,
-    normalizeThreadStatus, normalizeWorldKind, WORLD_KINDS, THREAD_STATUSES,
+    normalizeThreadStatus, normalizeWorldKind, normalizeSecretStatus, WORLD_KINDS, THREAD_STATUSES,
 } from './compiled-schema.js';
 import { parseSource, messageDateOf } from '../memory/message-sync-plan.js';
 
@@ -316,7 +316,7 @@ export function parseWorld(rawWorld, { previous, refs, resolve }) {
             entity: linked.id ? linked : null,
             known_by: names(raw.known_by).map(resolve),
             involved: names(raw.involved ?? raw.entities).map(resolve),
-            status: text(raw.status).toLowerCase(),
+            status: kind === 'secret' ? normalizeSecretStatus(raw.status) : text(raw.status).toLowerCase(),
             sources: [...new Set([...(previousById.get(id)?.sources ?? []), ...sourceIdsOf(raw.sources, refs)])],
         });
     }

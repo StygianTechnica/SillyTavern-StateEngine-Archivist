@@ -20,7 +20,7 @@ import { SCOPES, IMPORTANCE_LEVELS } from '../memory/schema.js';
 import { getAllMemories, deleteMemoryRecords, deleteChatMemories, MEMORIES_CHANGED_EVENT } from '../memory/archivist.js';
 import { listChatEntries, getChatEntry, getCurrentChatRef, chatKeyFor } from '../memory/registry.js';
 import { checkChatsExist } from '../memory/chat-existence.js';
-import { getObject } from '../api/objects.js';
+import { getObject, addObjectAlias } from '../api/objects.js';
 import { groupChats, filterChoices, filterRecords, shortDate, sourceLabel } from './memory-browser-model.js';
 import { confirmAction } from './confirm.js';
 import { getCompiledMemory, compileOpenChat, isCompiling, getCompilerStatus, onCompilerStatus, COMPILED_CHANGED_EVENT } from '../compiler/compiler.js';
@@ -373,7 +373,9 @@ const WORLD_SECTIONS = [
 ];
 
 function worldRow(entry) {
-    const row = el('div', 'ar-mb-fact');
+    // A secret revealed or disproven, an event over: kept, but settled.
+    const settled = ['revealed', 'disproven', 'over'].includes(entry.status);
+    const row = el('div', `ar-mb-fact${settled ? ' ar-mb-settled' : ''}`);
     const meta = el('div', 'ar-mb-record-meta');
     meta.append(el('span', 'ar-mb-strong', entry.name));
     if (entry.entity) meta.append(el('span', 'ar-mb-tag', entry.entity.type ?? 'object'));
@@ -448,8 +450,10 @@ function renderCompiled() {
     }
     const worldSections = WORLD_SECTIONS.map(([kind, title, emptyText]) => section(title, view.world[kind].map(worldRow), emptyText));
     const map = relationshipMap(view.relationship_map);
+    const suggestions = view.alias_suggestions ?? [];
     list.replaceChildren(
         head,
+        ...(suggestions.length ? [section('Suggested aliases', suggestions.map(aliasRow), '')] : []),
         section('Characters', view.character_profiles.map(profileBox), 'No lasting facts or insights yet.'),
         section('Scene', view.scene_state.map(factRow), 'Nothing about the current scene.'),
         section('Session', view.session_details.map(factRow), 'Nothing about this part of the story.'),
@@ -459,6 +463,38 @@ function renderCompiled() {
         ...worldSections,
         section('Timeline', view.timeline.map(timelineRow), 'No events yet.'),
     );
+}
+
+// A name the story uses for an object that the object doesn't have
+// (entity-link.js aliasSuggestions), with a button that adds it.
+function aliasRow(suggestion, index) {
+    const row = el('div', 'ar-mb-fact ar-mb-alias');
+    const meta = el('div', 'ar-mb-record-meta');
+    meta.append(el('span', 'ar-mb-strong', `"${suggestion.alias}"`), el('span', '', `for ${suggestion.object_name}`));
+    if (suggestion.object_type) meta.append(el('span', 'ar-mb-tag', suggestion.object_type));
+    const add = el('button', 'menu_button menu_button_icon', '');
+    add.type = 'button';
+    add.dataset.mbAlias = String(index);
+    add.title = `Add "${suggestion.alias}" to ${suggestion.object_name}'s aliases in State Engine, so it is recognised by that name everywhere`;
+    add.append(el('i', 'fa-solid fa-tag'), el('span', '', 'Add alias'));
+    meta.append(add);
+    row.append(meta, el('div', 'ar-mb-record-entities', 'The memories call it by this name - as an alias, State Engine and every extension link it to this object directly.'));
+    return row;
+}
+
+async function addSuggestedAlias(index) {
+    const suggestion = state.compiled?.alias_suggestions?.[index];
+    const entry = getChatEntry(state.selectedKey ?? '');
+    if (!suggestion || !entry) return;
+    try {
+        const updated = await addObjectAlias(entry.chatId, suggestion.object_id, suggestion.alias);
+        if (!updated) throw new Error('State Engine refused the alias');
+        toastr.success(`"${suggestion.alias}" is now an alias of ${suggestion.object_name}.`, 'Archivist');
+    } catch (err) {
+        console.warn(LOG_PREFIX, 'could not add the alias', err);
+        toastr.error('The alias could not be added - see the browser console.', 'Archivist');
+    }
+    await loadSelected();
 }
 
 function renderViewSwitch() {
@@ -536,6 +572,12 @@ function onClick(e) {
     }
     if (e.target.closest('[data-mb="compileNow"]')) {
         void runCompile(false);
+        return;
+    }
+    const alias = e.target.closest('[data-mb-alias]');
+    if (alias) {
+        alias.disabled = true;
+        void addSuggestedAlias(Number(alias.dataset.mbAlias));
         return;
     }
     if (e.target.closest('[data-mb="compileRebuild"]')) {

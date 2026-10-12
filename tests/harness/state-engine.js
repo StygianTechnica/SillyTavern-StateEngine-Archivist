@@ -152,9 +152,19 @@ export function createFakeStateEngine() {
             const found = objects.find((o) => o.id === id);
             return found ? { id: found.id, type: found.type, name: found.names[0], aliases: found.names.slice(1) } : null;
         },
+        listObjects(extensionId, instanceId, chatId, type) {
+            return objects.filter((o) => o.type === type).map((o) => ({ id: o.id, type: o.type, name: o.names[0], aliases: o.names.slice(1) }));
+        },
         getObjectByAlias(extensionId, instanceId, chatId, type, name) {
             const wanted = name.toLowerCase();
             return objects.find((o) => o.type === type && o.names.some((n) => n.toLowerCase() === wanted)) ?? null;
+        },
+        addObjectAlias(extensionId, instanceId, chatId, id, alias) {
+            log('addObjectAlias', [chatId, id, alias]);
+            const found = objects.find((o) => o.id === id);
+            if (!found) return null;
+            found.names.push(alias);
+            return { id: found.id, type: found.type, name: found.names[0], aliases: found.names.slice(1) };
         },
     };
 

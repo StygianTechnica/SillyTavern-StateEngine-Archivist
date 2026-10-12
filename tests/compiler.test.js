@@ -147,6 +147,16 @@ describe('planning and parsing', () => {
         expect(world[0]).toMatchObject({ entity: null, known_by: [{ id: 'chr_lucian' }, { id: null, name: 'Gavin' }], sources: ['m_old', 'm_a'] });
         expect(world[1]).toMatchObject({ entity: { id: 'loc_gym', type: 'location' }, involved: [{ id: 'chr_lucian' }] });
         expect(world[2].status).toBe('ongoing');
+        expect(world[0].status).toBe('kept');
+    });
+
+    it('keeps a secret that no longer holds, with its status', () => {
+        const world = parseWorld([
+            { id: 'w1', kind: 'secret', name: 'The debt', text: 'Turned out Lucian never owed anything.', status: 'Disproven' },
+            { kind: 'secret', name: 'The affair', text: 'Everyone knows now.', status: 'exposed' },
+            { kind: 'secret', name: 'The key', text: 'Hidden under the floor.', status: 'whatever' },
+        ], options);
+        expect(world.map((w) => [w.name, w.status])).toEqual([['The debt', 'disproven'], ['The affair', 'revealed'], ['The key', 'kept']]);
     });
 
     it('turns the answer into the next state, keeping a continued fact\'s id and earlier sources', () => {

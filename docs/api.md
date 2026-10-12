@@ -143,11 +143,25 @@ guide): `null` when it was never compiled. `chat_id` works as for
                message_index, message_date, source_message_id, chat_id, scope,
                importance, created_at }],                     // event memories, story order
   recent_tone: [{ tone, count }],                             // the newest memories' tones
+  alias_suggestions: [{ object_id, object_name, object_type, alias }],
+                               // names the story uses for an object that it doesn't have
 }
 
 entity = { id | null, name, type | null }   // a State Engine object (type: its object type),
                                             // or a name the story uses that matches none
+```
 
+**How names link to objects.** An entity's `name` is the name the model
+wrote. It links to an object by State Engine's own name/alias match, or -
+failing that - when both come down to the same words (case, punctuation,
+brackets, a leading article and word order ignored): "gremlin (lead)" is the
+object "A lead gremlin". Links are made at compile time and again on every
+`getCompiledMemory()`, so an object approved after the compile is linked
+too. A name linked only by that looser match is offered in
+`alias_suggestions` (the memory browser's Compiled view has an *Add alias*
+button for each).
+
+```js
 profile = {
   entity_id, entity_type, name,
   facts: [fact],                            // its PERMANENT facts
@@ -200,7 +214,10 @@ entry = {                                   // a world entry
   entity: entity | null,                    // the object it names (never for a secret)
   known_by: [entity],                       // a secret: who knows it
   involved: [entity],
-  status,                                   // an event: 'ongoing' | 'over'
+  status,                                   // a secret: 'kept' | 'revealed' | 'disproven';
+                                            // an event: 'ongoing' | 'over'
+                                            // (entries are never dropped - their status says
+                                            // when they no longer hold)
   chat_id, source_memory_ids, source_messages, message_range,
 }
 ```
