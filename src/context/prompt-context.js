@@ -51,8 +51,12 @@ function matcher(who) {
     return (entity) => !!entity && ((entity.id && ids.has(entity.id)) || keys.has(nameKey(entity.name)));
 }
 
+// Every block's first line: the model reads the block as reference, not as
+// text to continue or imitate.
+export const REFERENCE_MARKER = 'REFERENCE ONLY — DO NOT CONTINUE';
+
 function block(title, lines) {
-    return lines.length ? [title, ...lines].join('\n') : '';
+    return lines.length ? [REFERENCE_MARKER, title, ...lines].join('\n') : '';
 }
 
 // { [local variable name]: text } for the open chat.
@@ -65,7 +69,7 @@ export function buildPromptContext(view, { present = [], persona = null } = {}) 
     const isPresent = matcher(present);
     const inPlay = matcher(persona ? [...present, persona] : present);
 
-    if (view.story_summary) out.ctx_story_summary = `Story so far:\n${view.story_summary}`;
+    if (view.story_summary) out.ctx_story_summary = block('Story so far:', [view.story_summary]);
 
     const sceneLines = [];
     if (view.scene_summary) sceneLines.push(view.scene_summary);

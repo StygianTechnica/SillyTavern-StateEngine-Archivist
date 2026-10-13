@@ -8,7 +8,7 @@ import { resetFakeStateEngine } from './harness/state-engine.js';
 import { loadCurrentChat, addMemoryRecords } from '../src/memory/archivist.js';
 import { getCurrentChatRef } from '../src/memory/registry.js';
 import { getSettings } from '../src/settings.js';
-import { buildPromptContext, CONTEXT_BLOCKS } from '../src/context/prompt-context.js';
+import { buildPromptContext, CONTEXT_BLOCKS, REFERENCE_MARKER } from '../src/context/prompt-context.js';
 import { syncPromptContext, CONTEXT_CAPABILITIES } from '../src/context/prompt-sync.js';
 import { recentSceneMemories, parseSummary } from '../src/compiler/compile-plan.js';
 import { ensureLivePreset } from '../src/extraction/live.js';
@@ -60,20 +60,23 @@ describe('buildPromptContext', () => {
         ] },
     };
     const out = buildPromptContext(view, { present: [gremlin, syr], persona: syr });
+    // Every block starts with the marker line; the rest is compared below.
+    const body = (text) => text.replace(`${REFERENCE_MARKER}\n`, '');
 
     it('writes every block, focused on who is present', () => {
         expect(Object.keys(out)).toEqual(CONTEXT_BLOCKS.map(([name]) => name));
-        expect(out.ctx_story_summary).toBe('Story so far:\nSyrvanus searched for Alvaryx.');
-        expect(out.ctx_scene).toBe([
+        expect(body(out.ctx_story_summary)).toBe('Story so far:\nSyrvanus searched for Alvaryx.');
+        expect(body(out.ctx_scene)).toBe([
             'Current scene:', 'Syrvanus talks with gremlins in the Chronicle Room.', '- It is night.', 'Just happened:', '- The gremlins revealed themselves.',
         ].join('\n'));
-        expect(out.ctx_scene_characters).toBe('Characters in this scene:\n- A lead gremlin: traits: cautious; wants: serve the Mnemos; feeling: eager');
+        expect(body(out.ctx_scene_characters)).toBe('Characters in this scene:\n- A lead gremlin: traits: cautious; wants: serve the Mnemos; feeling: eager');
         // Zeno is not here: his relationship stays out; the gremlin's name matches loosely.
-        expect(out.ctx_scene_relationships).toBe('Relationships in this scene:\n- Syrvanus Voxaris -> gremlin (lead): ally, close (+2), medium intensity, warming. He accepts their help.');
-        expect(out.ctx_threads).toBe('Open story threads and quests:\n- [active] Find Alvaryx (quest): Alvaryx is missing. Progress: The gremlins offered to help.');
-        expect(out.ctx_recent_events).toBe('Recent events:\n- Zeno collared Syrvanus. (witnessed by Rydia)');
-        expect(out.ctx_secrets).toContain('- The collar: It is venomous. Known only by: Zeno.');
+        expect(body(out.ctx_scene_relationships)).toBe('Relationships in this scene:\n- Syrvanus Voxaris -> gremlin (lead): ally, close (+2), medium intensity, warming. He accepts their help.');
+        expect(body(out.ctx_threads)).toBe('Open story threads and quests:\n- [active] Find Alvaryx (quest): Alvaryx is missing. Progress: The gremlins offered to help.');
+        expect(body(out.ctx_recent_events)).toBe('Recent events:\n- Zeno collared Syrvanus. (witnessed by Rydia)');
+        expect(body(out.ctx_secrets)).toContain('- The collar: It is venomous. Known only by: Zeno.');
         expect(out.ctx_secrets).not.toContain('gremlin plot');
+        for (const text of Object.values(out)) expect(text.startsWith(`${REFERENCE_MARKER}\n`)).toBe(true);
     });
 
     it('is empty without a compiled view', () => {
@@ -84,7 +87,8 @@ describe('buildPromptContext', () => {
 describe('the prompt context in State Engine, for Curator', () => {
     it('offers each block to Curator', () => {
         expect(CONTEXT_CAPABILITIES).toContain('curator.inject:archivist__ctx_scene_relationships');
-        expect(CONTEXT_CAPABILITIES).toHaveLength(CONTEXT_BLOCKS.length);
+        expect(CONTEXT_CAPABILITIES).toContain('curator.inject.role:user:archivist__ctx_scene_relationships');
+        expect(CONTEXT_CAPABILITIES).toHaveLength(CONTEXT_BLOCKS.length * 2);
     });
 
     it('writes the open chat\'s blocks into the live preset, and only what changed', async () => {
@@ -102,7 +106,7 @@ describe('the prompt context in State Engine, for Curator', () => {
         await compileOpenChat();
 
         await syncPromptContext();
-        expect(fake.readValue('Chat A', 'archivist__ctx_story_summary')).toBe('Story so far:\nLucian started at the gym.');
+        expect(fake.readValue('Chat A', 'archivist__ctx_story_summary')).toBe(`${REFERENCE_MARKER}\nStory so far:\nLucian started at the gym.`);
         const writes = () => fake.calls.filter((c) => c.name === 'setVariableValue' && String(c.args[1]?.variableName ?? '').startsWith('ctx_')).length;
         const before = writes();
         await syncPromptContext();

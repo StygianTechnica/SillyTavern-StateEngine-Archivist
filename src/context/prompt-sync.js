@@ -22,8 +22,12 @@ import { nameKey } from '../compiler/entity-link.js';
 import { LIVE_PRESET } from '../extraction/live.js';
 import { CONTEXT_BLOCKS, buildPromptContext } from './prompt-context.js';
 
-// The Curator capability for each block's variable.
-export const CONTEXT_CAPABILITIES = CONTEXT_BLOCKS.map(([name]) => `curator.inject:${qualifiedName(name)}`);
+// The Curator capabilities for each block's variable: offered for injection,
+// as a user message (Curator's suggested role).
+export const CONTEXT_CAPABILITIES = CONTEXT_BLOCKS.flatMap(([name]) => [
+    `curator.inject:${qualifiedName(name)}`,
+    `curator.inject.role:user:${qualifiedName(name)}`,
+]);
 export const CONTEXT_VARIABLE_NAMES = CONTEXT_BLOCKS.map(([name]) => qualifiedName(name));
 
 // The characters in the scene - State Engine's present ones; failing that,
