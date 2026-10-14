@@ -41,12 +41,103 @@ export function objectNameIndex(objects) {
     };
 }
 
+// QUALIFIED NAMES: a model sometimes writes a name with a description in
+// brackets - "Remus Watt (romantic partner)", "Elyon (dying)". That is the
+// same character as the plain name. baseName() takes the qualifier off;
+// it is tried only when the whole name finds nothing, since a bracket can
+// also be part of how something is called ("gremlin (lead)").
+const QUALIFIER = /\s*[([][^()[\]]*[)\]]\s*$/;
+
+// "Remus Watt (romantic partner)" -> "Remus Watt"; the name itself when it
+// has no qualifier (or is nothing but one).
+export function baseName(name) {
+    const text = String(name ?? '').trim();
+    const base = text.replace(QUALIFIER, '').trim();
+    return base || text;
+}
+
 // `entity` ({ id | null, name, type }) linked to its object when it has no
-// id yet and `lookup` knows its name; otherwise as it is.
+// id yet and `lookup` knows its name - or its name without a qualifier,
+// which then takes the object's name; otherwise as it is.
 function relink(entity, lookup) {
     if (!entity || entity.id) return entity;
     const found = lookup(entity.name);
-    return found ? { ...entity, id: found.id, type: found.type } : entity;
+    if (found) return { ...entity, id: found.id, type: found.type };
+    const base = baseName(entity.name);
+    const byBase = base !== entity.name ? lookup(base) : null;
+    return byBase ? { ...entity, id: byBase.id, name: byBase.name ?? base, type: byBase.type } : entity;
+}
+
+// ---- one entity per character
+
+const entityKeyOf = (e) => (e?.id ? e.id : `name:${String(e?.name ?? '').toLowerCase()}`);
+
+// A copy of `compiled` where a name with a qualifier that another entity
+// already goes by without it ("Elyon (dying)" next to "Elyon") is that
+// entity, and what then names the same pair or character twice is one item:
+// the first relationship of a pair and the first insights of a character
+// win (an answer's own items come before the ones kept from earlier), with
+// their sources joined. A relationship of a character with itself is
+// dropped.
+export function mergeQualifiedNames(compiled) {
+    const all = [];
+    for (const f of compiled.facts ?? []) all.push(...(f.entities ?? []));
+    for (const r of compiled.relationships ?? []) all.push(r.from, r.to);
+    for (const c of compiled.characters ?? []) all.push(c.entity);
+    for (const t of compiled.threads ?? []) all.push(...(t.involved ?? []));
+    for (const w of compiled.world ?? []) all.push(...(w.known_by ?? []), ...(w.involved ?? []));
+    // The plain names, linked ones first.
+    const plain = new Map();
+    for (const e of all.filter(Boolean).sort((a, b) => Number(!!b.id) - Number(!!a.id))) {
+        if (QUALIFIER.test(e.name ?? '')) continue;
+        const key = nameKey(e.name);
+        if (key && !plain.has(key)) plain.set(key, e);
+    }
+    const canonical = (e) => {
+        if (!e || e.id || !QUALIFIER.test(e.name ?? '')) return e;
+        return plain.get(nameKey(baseName(e.name))) ?? e;
+    };
+    const canonicalList = (list) => {
+        const seen = new Set();
+        return (list ?? []).map(canonical).filter((e) => e && !seen.has(entityKeyOf(e)) && seen.add(entityKeyOf(e)));
+    };
+    const joinSources = (kept, other) => {
+        kept.sources = [...new Set([...(kept.sources ?? []), ...(other.sources ?? [])])];
+    };
+
+    const relationships = [];
+    const byPair = new Map();
+    for (const r of compiled.relationships ?? []) {
+        const next = { ...r, from: canonical(r.from), to: canonical(r.to) };
+        const pair = `${entityKeyOf(next.from)}|${entityKeyOf(next.to)}`;
+        if (entityKeyOf(next.from) === entityKeyOf(next.to)) continue;
+        if (byPair.has(pair)) {
+            joinSources(byPair.get(pair), next);
+            continue;
+        }
+        byPair.set(pair, next);
+        relationships.push(next);
+    }
+    const characters = [];
+    const byCharacter = new Map();
+    for (const c of compiled.characters ?? []) {
+        const next = { ...c, entity: canonical(c.entity) };
+        const key = entityKeyOf(next.entity);
+        if (byCharacter.has(key)) {
+            joinSources(byCharacter.get(key), next);
+            continue;
+        }
+        byCharacter.set(key, next);
+        characters.push(next);
+    }
+    return {
+        ...compiled,
+        facts: (compiled.facts ?? []).map((f) => ({ ...f, entities: canonicalList(f.entities) })),
+        relationships,
+        characters,
+        threads: (compiled.threads ?? []).map((t) => ({ ...t, involved: canonicalList(t.involved) })),
+        world: (compiled.world ?? []).map((w) => ({ ...w, known_by: canonicalList(w.known_by), involved: canonicalList(w.involved) })),
+    };
 }
 
 const relinkAll = (list, lookup) => (Array.isArray(list) ? list.map((e) => relink(e, lookup)) : list);

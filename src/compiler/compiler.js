@@ -33,7 +33,7 @@ import { findPreset } from '../api/presets.js';
 import { getVariable, createVariable, updateVariable, getVariableValue, setVariableValue } from '../api/variables.js';
 import { createIndependentPreset, configureIndependentPreset, updateIndependentPresetContext } from '../api/independent-presets.js';
 import { listObjectTypeIds, getObjectByAlias, getObject, listObjects } from '../api/objects.js';
-import { objectNameIndex, relinkCompiled, aliasSuggestions } from './entity-link.js';
+import { objectNameIndex, relinkCompiled, aliasSuggestions, baseName, mergeQualifiedNames } from './entity-link.js';
 import { getAllMemories, MEMORIES_CHANGED_EVENT } from '../memory/archivist.js';
 import { getCurrentChatRef, chatKeyFor, getChatEntry, findChatEntriesById, updateChatEntry, compiledFileFor } from '../memory/registry.js';
 import { readJsonFile, writeJsonFile } from '../memory/storage.js';
@@ -62,7 +62,8 @@ export const WORLD_VARIABLE = 'compiled_world';
 // kept with a status (a secret kept / revealed / disproven), never dropped.
 // 4: a character's summary (who they are now); SCENE facts end with their
 // scene.
-export const COMPILER_VARIABLE_VERSION = 4;
+// 5: names without a description in brackets.
+export const COMPILER_VARIABLE_VERSION = 5;
 
 // New memories per compile run.
 export const COMPILE_BATCH = 60;
@@ -109,7 +110,7 @@ const FACTS_INSTRUCTIONS = [
 
 const RELATIONSHIPS_INSTRUCTIONS = [
     'The COMPLETE updated list of relationships, one item for each direction of a pair (how A sees B, and how B sees A, can differ) - keep the current ones that still hold, revise them as the new memories change them, add new ones.',
-    'Each item is an object: {"from": a name; "to": a name;',
+    'Each item is an object: {"from": a name; "to": a name - each the name only, exactly as the story names them and as the current relationships write it, never with a description in brackets ("Remus Watt", not "Remus Watt (romantic partner)");',
     '"type": what the relationship is, in your own words - friend, enemy, mentor, student, colleague, boss, client, rival, crush, partner, family, acquaintance, stranger, or whatever fits best;',
     '"polarity": how "from" feels toward "to", a whole number from -3 to 3: -3 hostile, -2 antagonistic, -1 wary, 0 neutral, 1 friendly, 2 close, 3 devoted;',
     '"intensity": how strong or central the relationship is to "from" - "low", "medium" or "high";',
@@ -119,7 +120,7 @@ const RELATIONSHIPS_INSTRUCTIONS = [
 
 const CHARACTERS_INSTRUCTIONS = [
     'The COMPLETE updated list of character insights - one item per character the memories show enough of, inferred from what they do, say, choose and go through; keep the current ones, revised and added to by the new memories.',
-    'Each item is an object: {"name": the character\'s name as the story names them;',
+    'Each item is an object: {"name": the character\'s name as the story names them and the current insights write it - the name only, never with a description in brackets;',
     '"summary": who they are NOW, in 2 to 4 sentences - what is known about them as of the newest memories, judged by what they have done and how they have behaved: their situation, what they are caught up in, how they treat others and what others have learned about them. Rewrite it as the story moves on: a portrait of the present, not a history of events;',
     '"traits": personality traits their behaviour shows (a list of short phrases);',
     '"habits": habits and routines;',
@@ -344,10 +345,23 @@ export async function entityResolver(chatId) {
     const cache = new Map();
     const names = new Map();
     return {
-        // { id | null, name, type | null } for a name.
+        // { id | null, name, type | null } for a name. A name with a
+        // qualifier ("Remus Watt (romantic partner)") that finds nothing is
+        // tried without it, and then goes by the object's name.
         async resolve(name) {
             const key = name.toLowerCase();
             if (cache.has(key)) return cache.get(key);
+            let entity = await this.lookup(name);
+            const base = baseName(name);
+            if (!entity.id && base !== name) {
+                const plain = await this.lookup(base);
+                if (plain.id) entity = plain;
+            }
+            cache.set(key, entity);
+            return entity;
+        },
+        // resolve() without the qualifier fallback.
+        async lookup(name) {
             let found = null;
             let foundType = null;
             for (const type of types) {
@@ -362,10 +376,8 @@ export async function entityResolver(chatId) {
                 }
             }
             const near = found?.id ? null : loose(name);
-            const entity = found?.id ? { id: found.id, name: found.name ?? name, type: foundType }
+            return found?.id ? { id: found.id, name: found.name ?? name, type: foundType }
                 : (near ? { id: near.id, name, type: near.type } : { id: null, name, type: null });
-            cache.set(key, entity);
-            return entity;
         },
         // A display name for an entity id, or null.
         async nameOf(id) {
@@ -495,6 +507,8 @@ async function compileRun(ref, { rebuild }) {
             schema: compiled.schema,
         };
         // Saved after every batch: a long rebuild keeps what it has done.
+        // One entity per character: "Elyon (dying)" is Elyon.
+        compiled = mergeQualifiedNames(compiled);
         await writeCompiled(chatKey, compiled);
         if (chatKey === openKey()) openCache = { chatKey, compiled };
     }
@@ -587,7 +601,7 @@ export async function getCompiledMemory(chatId) {
         const sillyChatId = getChatEntry(chatKey).chatId;
         // Names no object had when compiled may have one now.
         const objects = await chatObjects(sillyChatId, await listObjectTypeIds());
-        const compiled = relinkCompiled(stored, objectNameIndex(objects));
+        const compiled = mergeQualifiedNames(relinkCompiled(stored, objectNameIndex(objects)));
         const records = await getAllMemories(chatKey);
         const names = await witnessNames(sillyChatId, records);
         const view = buildCompiledView(compiled, records, (id) => names.get(id) ?? null);

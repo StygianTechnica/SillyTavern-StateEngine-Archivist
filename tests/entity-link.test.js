@@ -9,7 +9,7 @@ import { resetFakeStateEngine } from './harness/state-engine.js';
 import { loadCurrentChat, addMemoryRecords } from '../src/memory/archivist.js';
 import { getCurrentChatRef } from '../src/memory/registry.js';
 import { getSettings } from '../src/settings.js';
-import { nameKey, objectNameIndex, relinkCompiled, aliasSuggestions } from '../src/compiler/entity-link.js';
+import { nameKey, objectNameIndex, relinkCompiled, aliasSuggestions, baseName, mergeQualifiedNames } from '../src/compiler/entity-link.js';
 import { compileOpenChat, getCompiledMemory } from '../src/compiler/compiler.js';
 import { EMPTY_COMPILED } from '../src/compiler/compile-plan.js';
 import { openMemoryBrowser, closeMemoryBrowser } from '../src/ui/memory-browser.js';
@@ -139,5 +139,45 @@ describe('getCompiledMemory', () => {
         expect(fake.calls.find((c) => c.name === 'addObjectAlias').args).toEqual(['Chat A', 'chr_g', 'gremlin (lead)']);
         expect(globalThis.toastr.success).toHaveBeenCalled();
         closeMemoryBrowser();
+    });
+});
+
+// A name with a description in brackets is the character of the plain name
+// (the God War chat: "Remus Watt (romantic partner)", "Elyon (dying)").
+describe('qualified names', () => {
+    const remus = { id: 'chr_remus', name: 'Remus Watt', type: 'character' };
+    const varyn = { id: 'chr_varyn', name: 'Varyn Vance', type: 'character' };
+    const rel = (from, to, type, sources = []) => ({ from, to, type, polarity: 1, intensity: 'medium', trend: '', text: type, sources });
+
+    it('baseName takes the qualifier off', () => {
+        expect(baseName('Remus Watt (romantic partner)')).toBe('Remus Watt');
+        expect(baseName('Elyon [dying]')).toBe('Elyon');
+        expect(baseName('Elyon')).toBe('Elyon');
+        expect(baseName('(someone)')).toBe('(someone)');
+    });
+
+    it('relinks a qualified name to the object of its plain name, under the object\'s name', () => {
+        const lookup = objectNameIndex([remus]);
+        const compiled = relinkCompiled({ ...EMPTY_COMPILED, relationships: [rel(varyn, { id: null, name: 'Remus Watt (romantic partner)' }, 'lover')] }, lookup);
+        expect(compiled.relationships[0].to).toEqual({ id: 'chr_remus', name: 'Remus Watt', type: 'character' });
+        // A bracket that is part of a name still matches as a whole first.
+        expect(relinkCompiled({ ...EMPTY_COMPILED, relationships: [rel(varyn, { id: null, name: 'gremlin (lead)' }, 'x')] },
+            objectNameIndex([{ id: 'chr_g', name: 'A lead gremlin' }])).relationships[0].to.name).toBe('gremlin (lead)');
+    });
+
+    it('merges a qualified name into the plain one, one relationship per pair and one set of insights per character', () => {
+        const elyon = { id: null, name: 'Elyon', type: null };
+        const dying = { id: null, name: 'Elyon (dying)', type: null };
+        const merged = mergeQualifiedNames({
+            ...EMPTY_COMPILED,
+            relationships: [rel(varyn, dying, 'mentor', ['m2']), rel(varyn, elyon, 'teacher', ['m1']), rel(elyon, dying, 'self')],
+            characters: [{ entity: dying, traits: ['frail'], sources: ['m2'] }, { entity: elyon, traits: ['wise'], sources: ['m1'] }],
+            facts: [{ id: 'f1', text: 'x', entities: [dying, elyon], sources: [] }],
+        });
+        expect(merged.relationships.map((r) => [r.from.name, r.to.name, r.type, r.sources])).toEqual([['Varyn Vance', 'Elyon', 'mentor', ['m2', 'm1']]]);
+        expect(merged.characters.map((c) => [c.entity.name, c.traits])).toEqual([['Elyon', ['frail']]]);
+        expect(merged.facts[0].entities).toEqual([elyon]);
+        // A qualified name with no plain one stays as it is.
+        expect(mergeQualifiedNames({ ...EMPTY_COMPILED, relationships: [rel(varyn, dying, 'mentor')] }).relationships[0].to.name).toBe('Elyon (dying)');
     });
 });
