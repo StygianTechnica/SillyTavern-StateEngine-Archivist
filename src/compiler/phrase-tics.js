@@ -21,10 +21,15 @@
 // block only asks for variety while a tic is in use (count >= WARN_AT).
 
 // AI replies scanned for candidates, and phrase lengths, in words.
-export const TIC_WINDOW = 10;
-export const MIN_WORDS = 4;
+// 20 replies: a tic tends to come back every few replies, so 10 of ~200
+// words each rarely showed one more than twice. A three-word phrase
+// ("raised an eyebrow") must recur in SHORT_MIN_REPLIES replies - at three
+// words, chance repeats are common.
+export const TIC_WINDOW = 20;
+export const MIN_WORDS = 3;
 export const MAX_WORDS = 8;
-export const MAX_CANDIDATES = 25;
+export const SHORT_MIN_REPLIES = 3;
+export const MAX_CANDIDATES = 40;
 export const MAX_COUNT = 5;
 export const WARN_AT = 2;
 export const MAX_SHOWN = 8;
@@ -87,43 +92,48 @@ function sentenceAround(text, at) {
 }
 
 // The word sequences (MIN_WORDS..MAX_WORDS) that recur across different
-// `replies` ([{ index, text }] - the latest AI replies), longest and most
-// repeated first, a shorter one left out when a longer one covers it:
-// [{ ref: 'p1', key, text, replies: [index], example }], at most
-// MAX_CANDIDATES.
+// `replies` ([{ index, text }] - the latest AI replies), most repeated
+// first, then longest: [{ ref: 'p1', key, text, replies: [index],
+// example }], at most MAX_CANDIDATES. One phrase is one candidate: a
+// sequence whose every occurrence overlaps one already chosen - the same
+// words shifted ("placing a hand on his shoulder in", "a hand on his
+// shoulder in a"), or a part of it - is left out.
 export function findCandidates(replies) {
-    const found = new Map(); // key -> { key, text, replies: Set, example }
+    // key -> { key, text, spans: Map(reply index -> [start, end)), example }
+    const found = new Map();
     for (const reply of replies ?? []) {
         const toks = tokens(reply.text);
-        const seen = new Set();
         for (let n = MIN_WORDS; n <= MAX_WORDS; n++) {
             for (let i = 0; i + n <= toks.length; i++) {
                 const slice = toks.slice(i, i + n);
                 const words = slice.map((t) => t.word);
                 const key = words.join(' ');
-                if (seen.has(key) || contentWords(words) < MIN_CONTENT) continue;
-                seen.add(key);
+                if (contentWords(words) < MIN_CONTENT) continue;
+                // Three words around a name ("back to Remus") are the story,
+                // not wording: a capital after the first word is a name.
+                if (n < 4 && slice.slice(1).some((t) => /^\p{Lu}/u.test(t.raw))) continue;
                 if (!found.has(key)) {
                     const text = slice.map((t) => t.raw).join(' ');
                     const at = plain(reply.text).replace(/\s+/g, ' ').indexOf(slice[0].raw);
-                    found.set(key, { key, text, replies: new Set(), example: sentenceAround(reply.text, Math.max(0, at)) });
+                    found.set(key, { key, text, spans: new Map(), example: sentenceAround(reply.text, Math.max(0, at)) });
                 }
-                found.get(key).replies.add(reply.index);
+                const spans = found.get(key).spans;
+                if (!spans.has(reply.index)) spans.set(reply.index, [i, i + n]);
             }
         }
     }
-    const repeated = [...found.values()].filter((c) => c.replies.size >= 2)
-        .sort((a, b) => b.key.split(' ').length - a.key.split(' ').length || b.replies.size - a.replies.size);
+    const length = (c) => c.key.split(' ').length;
+    const repeated = [...found.values()]
+        .filter((c) => c.spans.size >= (length(c) < 4 ? SHORT_MIN_REPLIES : 2))
+        .sort((a, b) => b.spans.size - a.spans.size || length(b) - length(a));
     const kept = [];
+    const overlaps = (a, b) => a[0] < b[1] && b[0] < a[1];
     for (const candidate of repeated) {
-        // Covered by a longer phrase found in as many replies: the same tic.
-        if (kept.some((k) => ` ${k.key} `.includes(` ${candidate.key} `) && k.replies.size >= candidate.replies.size)) continue;
-        kept.push(candidate);
+        const covered = [...candidate.spans].every(([reply, span]) => kept.some((k) => k.spans.has(reply) && overlaps(k.spans.get(reply), span)));
+        if (!covered) kept.push(candidate);
+        if (kept.length >= MAX_CANDIDATES) break;
     }
-    return kept
-        .sort((a, b) => b.replies.size - a.replies.size || b.key.split(' ').length - a.key.split(' ').length)
-        .slice(0, MAX_CANDIDATES)
-        .map((c, i) => ({ ref: `p${i + 1}`, key: c.key, text: c.text, replies: [...c.replies].sort((x, y) => x - y), example: c.example }));
+    return kept.map((c, i) => ({ ref: `p${i + 1}`, key: c.key, text: c.text, replies: [...c.spans.keys()].sort((x, y) => x - y), example: c.example }));
 }
 
 // What the compiler's model reads about them.
@@ -135,19 +145,26 @@ export function candidateLines(candidates) {
     ];
 }
 
-// The model's answer ([{ ref, phrase }]) as [{ key, phrase }]: only refs it
-// was given; its phrase when it is the tic itself (part of the candidate, or
-// the candidate with a little more), else the candidate's words.
+// The model's answer ([{ ref, phrase }]) as [{ key, phrase }]: only
+// candidates it was given; its phrase when it is the tic itself (part of
+// the candidate, or the candidate with a little more), else the
+// candidate's words. Lenient about the shape - a model may leave out the
+// ref, or answer plain strings: the phrase is then matched to the candidate
+// it is part of (or that is part of it).
 export function parseTicAnswer(raw, candidates) {
-    const byRef = new Map((candidates ?? []).map((c) => [c.ref, c]));
+    const list = candidates ?? [];
+    const byRef = new Map(list.map((c) => [c.ref, c]));
+    const near = (a, b) => ` ${a} `.includes(` ${b} `) || ` ${b} `.includes(` ${a} `);
     const out = [];
     const keys = new Set();
-    for (const item of Array.isArray(raw) ? raw : []) {
-        const ref = String(item?.ref ?? item?.id ?? '').replace(/^\[|\]$/g, '').trim();
-        const candidate = byRef.get(ref);
-        if (!candidate) continue;
-        const phrase = typeof item.phrase === 'string' ? item.phrase.trim().replace(/^["“]|["”.]+$/g, '') : '';
+    for (const entry of Array.isArray(raw) ? raw : []) {
+        const item = typeof entry === 'string' ? { phrase: entry } : entry;
+        if (!item || typeof item !== 'object') continue;
+        const phrase = String(item.phrase ?? item.text ?? item.tic ?? '').trim().replace(/^["“]|["”.]+$/g, '');
         const key = phraseKey(phrase);
+        const ref = String(item.ref ?? item.id ?? '').replace(/^\[|\]$/g, '').trim();
+        const candidate = byRef.get(ref) ?? (key ? list.find((c) => near(c.key, key)) : null);
+        if (!candidate) continue;
         const own = key.split(' ').length >= 3 && (candidate.key.includes(key) || key.includes(candidate.key));
         const tic = own ? { key, phrase } : { key: candidate.key, phrase: candidate.text };
         if (keys.has(tic.key)) continue;

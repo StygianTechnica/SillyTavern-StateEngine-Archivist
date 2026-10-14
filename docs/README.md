@@ -225,8 +225,9 @@ lips, a tone turning serious - Archivist notices and, through Curator, asks
 the model to vary it for a while. Nothing is banned or rewritten.
 
 - **Finding:** each compile, the word sequences that recur across the last
-  10 AI replies go to the compiler, which picks the real tics - leaving out
-  names, plot details and a character's own way of speaking.
+  20 AI replies (4 to 8 words in two replies, or 3 words in three) go to the
+  compiler, which picks the real tics - leaving out what the story has to
+  name again (places, groups, objects) and a character's catchphrase.
 - **Following:** a found tic starts at count 1. Each later reply that uses
   it again adds 1 (up to 5); every *Fade after* replies without it take 1
   away (drawer -> Compiler, default 10), and at 0 it is forgotten. If it

@@ -41,6 +41,27 @@ describe('finding repeated wording', () => {
         expect(candidateLines([])).toEqual(['Repeated phrases in the latest replies:', '(none)']);
     });
 
+    it('keeps one candidate per phrase, allows short tics that recur often, and skips short ones around a name', () => {
+        const candidates = findCandidates([
+            { index: 1, text: 'Varyn reached out, placing a hand on Remus\'s shoulder. Rain fell on the ruined tower. He raised an eyebrow. They went back to Remus.' },
+            { index: 2, text: 'The wind howled across the plain. Mira reached out, placing a hand on Remus\'s shoulder. She raised an eyebrow, amused. Kael went back to Remus.' },
+            { index: 3, text: 'Dawn broke slowly. He raised an eyebrow at the map. Varyn walked back to Remus quietly.' },
+        ]);
+        const keys = candidates.map((c) => c.key);
+        // The long phrase once - not its shifted slices.
+        expect(keys.filter((k) => k.includes('hand on remus'))).toHaveLength(1);
+        expect(keys).toContain('they raised an eyebrow');
+        expect(keys.some((k) => k === 'back to remus')).toBe(false);
+        // Three words need three replies.
+        expect(findCandidates([{ index: 1, text: 'Mira raised an eyebrow.' }, { index: 2, text: 'Kael raised an eyebrow.' }])).toEqual([]);
+    });
+
+    it('takes the model\'s answer in a loose shape - no ref, or plain strings', () => {
+        const candidates = findCandidates(replies);
+        expect(parseTicAnswer(['his tone turned serious', { phrase: 'a wry smile tugged at her lips' }, 'invented phrase'], candidates).map((t) => t.key))
+            .toEqual(['their tone turned serious', 'a wry smile tugged at their lips']);
+    });
+
     it('takes the model\'s judgement only for candidates it was given', () => {
         const candidates = findCandidates(replies);
         expect(parseTicAnswer([

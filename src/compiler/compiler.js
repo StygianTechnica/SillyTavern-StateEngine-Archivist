@@ -67,7 +67,8 @@ export const WORLD_VARIABLE = 'compiled_world';
 // scene.
 // 5: names without a description in brackets.
 // 6: phrase tics.
-export const COMPILER_VARIABLE_VERSION = 6;
+// 7: phrase tics: a wider net.
+export const COMPILER_VARIABLE_VERSION = 7;
 
 // New memories per compile run.
 export const COMPILE_BATCH = 60;
@@ -173,9 +174,10 @@ const SCENE_SUMMARY_INSTRUCTIONS = [
 ].join(' ');
 
 const PHRASE_TICS_INSTRUCTIONS = [
-    'The narration\'s phrase tics: from the "Repeated phrases in the latest replies" (each with a ref like [p2] and an example), the ones that are stock wording the writing leans on - a repeated gesture, emotional cue, descriptive beat or sentence pattern ("a wry smile tugged at his lips", "his tone turned serious", "shot a sidelong glance").',
-    'Leave out names, places and things the story needs to repeat, and a character\'s deliberate catchphrase or way of speaking.',
-    'Each item is an object: {"ref": its [p...] ref; "phrase": the tic as written, trimmed to the stock wording itself}. [] when none of them is a tic, or none are listed.',
+    'The narration\'s phrase tics: from the "Repeated phrases in the latest replies" (each with a ref like [p2] and an example), every one that is stock wording the writing leans on.',
+    'Prose models repeat themselves a lot, so expect several: a body-language beat ("a smile playing on his lips", "raised an eyebrow", "shot him a sidelong glance"), how a voice is described ("his voice low and steady"), a stock emotion ("a hint of mischief", "a spark of curiosity"), a stock action ("fell into step beside", "placing a hand on his shoulder"), a stock description ("in her emerald eyes").',
+    'A phrase with a name in it still counts when the wording around the name is the stock part. Leave out only what the story has to name again (a place, a group, an object, a title) and a line a character says on purpose as their catchphrase.',
+    'Each item is an object: {"ref": its [p...] ref; "phrase": the tic as written, trimmed to the stock wording itself}. [] only when none of them is stock wording, or none are listed.',
 ].join(' ');
 
 // A prompted text answer (the summaries), read and cleared like the lists.
