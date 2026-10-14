@@ -12,6 +12,7 @@
 
 import { nameKey } from '../compiler/entity-link.js';
 import { SCENE_WINDOW } from '../compiler/compile-plan.js';
+import { activeTics } from '../compiler/phrase-tics.js';
 
 // The blocks, in the order a user would usually want them: [local variable
 // name, label, what it holds].
@@ -23,6 +24,7 @@ export const CONTEXT_BLOCKS = Object.freeze([
     ['ctx_threads', 'Open threads and quests', 'Plot hooks, unresolved threads and quests still open or active.'],
     ['ctx_recent_events', 'Recent events', 'The latest events of the story, in order.'],
     ['ctx_secrets', 'Secrets (narrator only)', 'Secrets still kept, and who knows them - knowledge for the narrator, not the characters.'],
+    ['ctx_phrase_tics', 'Phrase tics to vary', 'Stock phrases the narration has been repeating lately, with a request to vary the wording for now.'],
 ]);
 
 export const MAX_ITEMS = 8;
@@ -88,12 +90,25 @@ function sceneLines(view, present) {
     return lines.length > (here.length ? 1 : 0) ? lines : [];
 }
 
+// The phrase tics in use, as a gentle request for variety - never a ban.
+// No apostrophes anywhere in it: phrases are written without theirs.
+export function phraseTicBlock(tics) {
+    const phrases = activeTics(tics).map((t) => t.phrase.replace(/['’‘`]/g, '').trim()).filter(Boolean);
+    if (!phrases.length) return '';
+    return block('Recent phrase tics detected. Please avoid the following phrases for now and vary your wording:', [
+        ...phrases.map((p) => `- ${p}`),
+        'Use alternative gestures or emotional cues. Maintain character voice and scene logic.',
+    ]);
+}
+
 // { [local variable name]: text } for the open chat.
 //   view      getCompiledMemory() (null: never compiled)
 //   present   [{ id?, name, aliases? }] - the characters in the scene
 //   persona   { id?, name, aliases? } | null - the user's persona
-export function buildPromptContext(view, { present = [], persona = null } = {}) {
+//   phraseTics  the chat's phrase tics (phrase-tic-tracker.js)
+export function buildPromptContext(view, { present = [], persona = null, phraseTics = [] } = {}) {
     const out = Object.fromEntries(CONTEXT_BLOCKS.map(([name]) => [name, '']));
+    out.ctx_phrase_tics = phraseTicBlock(phraseTics);
     if (!view) return out;
     const isPresent = matcher(present);
     const inPlay = matcher(persona ? [...present, persona] : present);

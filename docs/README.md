@@ -208,12 +208,36 @@ ones you want and drag them where they belong:
 - **Recent events** - the latest events, with who witnessed them
 - **Secrets (narrator only)** - secrets still kept and who knows them:
   knowledge for the narrator, not something the characters know
+- **Phrase tics to vary** - stock phrases the narration has been repeating
+  ("a wry smile tugged at his lips"), with a gentle request to word things
+  differently for now - see below
 
 "Present" is State Engine's own idea of who is in the scene (the characters
 marked present); without that, whoever the newest scene memories name.
 Archivist keeps the blocks current as memories arrive, after a compile and
 when the scene changes; a block with nothing to say sends nothing. They
 work while Archivist is enabled for the chat.
+
+### Phrase tics
+
+When the narration leans on the same stock wording - a wry smile tugging at
+lips, a tone turning serious - Archivist notices and, through Curator, asks
+the model to vary it for a while. Nothing is banned or rewritten.
+
+- **Finding:** each compile, the word sequences that recur across the last
+  10 AI replies go to the compiler, which picks the real tics - leaving out
+  names, plot details and a character's own way of speaking.
+- **Following:** a found tic starts at count 1. Each later reply that uses
+  it again adds 1 (up to 5); every *Fade after* replies without it take 1
+  away (drawer -> Compiler, default 10), and at 0 it is forgotten. If it
+  comes back later it starts over at 1.
+- **Asking:** while a tic's count is 2 or more, the **Phrase tics to vary**
+  block lists it (no apostrophes, per the format) and asks for other
+  gestures or cues, keeping character voice and scene logic.
+
+They are listed, with their counts, at the end of **Review memories ->
+Compiled**, where the bin forgets one. Turn it all off with **Track phrase
+tics** in the drawer.
 
 ### The memory browser
 

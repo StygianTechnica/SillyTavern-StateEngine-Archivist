@@ -30,6 +30,8 @@ import {
     editCompiledMemoryItem, deleteCompiledMemoryItem, editCompiledMemorySummary,
 } from '../compiler/compiler.js';
 import { findViewItem, editValues, buildEditForm, itemButtons } from './compiled-edit.js';
+import { getChatPhraseTics, removePhraseTic, PHRASE_TICS_CHANGED_EVENT } from '../compiler/phrase-tic-tracker.js';
+import { WARN_AT } from '../compiler/phrase-tics.js';
 import { compilerLine } from './drawer-model.js';
 import { jumpToMessage } from './chat-jump.js';
 
@@ -46,6 +48,7 @@ const state = {
     view: 'memories',     // 'memories' | 'compiled'
     compiled: null,       // the selected chat's compiled view (getCompiledMemory), or null
     editing: null,        // { kind, key, values } - the compiled item being edited
+    tics: [],             // the selected chat's phrase tics
 };
 let overlay = null;
 let loadToken = 0;
@@ -89,6 +92,7 @@ async function loadSelected() {
         compiled = null;
     }
     if (token !== loadToken) return;
+    state.tics = key ? getChatPhraseTics(key) : [];
     state.records = records;
     state.names = names;
     state.compiled = compiled;
@@ -515,7 +519,28 @@ function renderCompiled() {
         section('Story threads and quests', view.threads.map(threadRow), 'No plot hooks, open threads or quests yet.'),
         ...worldSections,
         section('Timeline', view.timeline.map(timelineRow), 'No events yet.'),
+        section('Phrase tics', state.tics.map(ticRow), 'No repeated stock phrases found in the narration lately.'),
     );
+}
+
+// A phrase tic: how much it is in use, and a button to forget it (it can
+// be found again later - nothing is banned).
+function ticRow(tic) {
+    const inUse = tic.count >= WARN_AT;
+    const row = el('div', `ar-mb-fact${inUse ? '' : ' ar-mb-settled'}`);
+    const meta = el('div', 'ar-mb-record-meta');
+    meta.append(el('span', 'ar-mb-status', inUse ? 'In use' : 'Watching'), el('span', '', `count ${tic.count}`));
+    if (tic.last_used) meta.append(el('span', '', `last seen ${shortDate(tic.last_used)}`));
+    const remove = el('button', 'menu_button fa-solid fa-trash-can ar-mb-item-button');
+    remove.type = 'button';
+    remove.title = 'Forget this phrase tic (the compiler may find it again if it keeps coming back)';
+    remove.dataset.mbTic = tic.key;
+    const buttons = el('span', 'ar-mb-item-buttons');
+    buttons.append(remove);
+    meta.append(buttons);
+    row.append(meta, el('div', 'ar-mb-record-text', tic.phrase));
+    row.title = inUse ? 'The Curator block Phrase tics to vary asks the model to word this differently for now.' : 'Seen repeated; asked about only if it keeps coming back.';
+    return row;
 }
 
 function summaryRow(text, which) {
@@ -703,6 +728,12 @@ function onClick(e) {
         void removeItem(remove.dataset.mbRemove, remove.dataset.mbKey);
         return;
     }
+    const tic = e.target.closest('[data-mb-tic]');
+    if (tic) {
+        removePhraseTic(state.selectedKey, tic.dataset.mbTic);
+        void loadSelected();
+        return;
+    }
     if (e.target.closest('[data-mb-save]')) {
         void saveEdit();
         return;
@@ -861,6 +892,7 @@ function build() {
     };
     SillyTavern.getContext().eventSource.on(MEMORIES_CHANGED_EVENT, refresh);
     SillyTavern.getContext().eventSource.on(COMPILED_CHANGED_EVENT, refresh);
+    SillyTavern.getContext().eventSource.on(PHRASE_TICS_CHANGED_EVENT, refresh);
     // The compiled view shows what the compiler is doing as it does it.
     onCompilerStatus(() => {
         if (state.open && state.view === 'compiled' && !state.editing) render();

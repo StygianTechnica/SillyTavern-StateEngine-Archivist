@@ -80,7 +80,8 @@ describe('buildPromptContext', () => {
         expect(body(out.ctx_recent_events)).toBe('Recent events:\n- Zeno collared Syrvanus. (witnessed by Rydia)');
         expect(body(out.ctx_secrets)).toContain('- The collar: It is venomous. Known only by: Zeno.');
         expect(out.ctx_secrets).not.toContain('gremlin plot');
-        for (const text of Object.values(out)) expect(text.startsWith(`${REFERENCE_MARKER}\n`)).toBe(true);
+        expect(out.ctx_phrase_tics).toBe('');
+        for (const text of Object.values(out).filter(Boolean)) expect(text.startsWith(`${REFERENCE_MARKER}\n`)).toBe(true);
     });
 
     it('leaves an old scene summary out of the current scene', () => {

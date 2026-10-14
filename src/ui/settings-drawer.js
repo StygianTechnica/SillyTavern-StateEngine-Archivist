@@ -163,6 +163,13 @@ function wireCompiler() {
         getSettings().compileWorld = world.checked;
         saveSettings();
     });
+    const tics = byId('ar_phrase_tics');
+    tics.checked = getSettings().trackPhraseTics !== false;
+    tics.addEventListener('change', () => {
+        getSettings().trackPhraseTics = tics.checked;
+        saveSettings();
+    });
+    bindNumber('ar_phrase_tic_fade', 'phraseTicFadeAfter', 1, 200);
     bindNumber('ar_compile_threshold', 'compileThreshold', 1, 200);
     bindNumber('ar_compile_interval', 'compileIntervalMinutes', 1, 1440);
     bindNumber('ar_compile_gap', 'compileMinGapMinutes', 0, 1440);

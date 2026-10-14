@@ -174,7 +174,9 @@ function characterLine(c) {
 // What the MEMORY part's model reads: the current facts, relationships and
 // character insights, then the new memories. `nameOf(id)` -> a display
 // name for an entity id (or null).
-export function compileContext(previous, batch, nameOf = () => null) {
+// `extraLines`: more to read before the new memories (the repeated phrases
+// of the latest replies, for the phrase tics).
+export function compileContext(previous, batch, nameOf = () => null, extraLines = []) {
     const lines = [
         'Current compiled knowledge:',
         `Story so far: ${previous.summary?.story || '(none yet)'}`,
@@ -193,6 +195,7 @@ export function compileContext(previous, batch, nameOf = () => null) {
     if (!previous.characters?.length) lines.push('(none yet)');
     for (const c of previous.characters ?? []) lines.push(characterLine(c));
     lines.push(...dismissedLines(previous, ['fact', 'relationship', 'character']));
+    lines.push(...extraLines);
     lines.push(...newMemoryLines(batch, nameOf));
     return lines.join('\n');
 }

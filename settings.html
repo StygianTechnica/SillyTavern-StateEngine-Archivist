@@ -74,6 +74,16 @@
                     <span>Also compile story threads, quests and the world</span>
                 </label>
                 <div class="ar-row">
+                    <label class="checkbox_label" title="The compiler looks for stock phrases the narration keeps repeating (a wry smile, a tone turning serious...), and each new reply is checked against them. While one is in use, the Curator block Phrase tics to vary asks the model to word things differently - nothing is ever banned.">
+                        <input id="ar_phrase_tics" type="checkbox" />
+                        <span>Track phrase tics</span>
+                    </label>
+                    <label class="ar-field" title="A tic loses one count after this many AI replies without it, and is forgotten at zero.">
+                        <span>Fade after (replies)</span>
+                        <input id="ar_phrase_tic_fade" type="number" class="text_pole" min="1" max="200" step="1" />
+                    </label>
+                </div>
+                <div class="ar-row">
                     <label class="ar-field" title="Compile once this many new memories have arrived (near-repeats don't count).">
                         <span>After new memories</span>
                         <input id="ar_compile_threshold" type="number" class="text_pole" min="1" max="200" step="1" />

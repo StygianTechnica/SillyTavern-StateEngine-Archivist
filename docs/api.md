@@ -300,6 +300,15 @@ const { forward } = await archivist.getRelationship(characterId, SillyTavern.get
 if (forward) showBadge(`${forward.type} · ${forward.polarity_label} · ${forward.intensity}`);
 ```
 
+### `getPhraseTics(chat_id?)` -> `[{ phrase, count, last_used }]`
+
+The chat's phrase tics - stock phrases the narration has been repeating
+(see the user guide, *Phrase tics*). `count` 2 or more means in use right
+now; `last_used` is an ISO time. `[]` when there are none.
+`PHRASE_TICS_CHANGED_EVENT` (payload `{ chatId, chatKey }`) follows each
+change. Archivist already offers a Curator block for them; Scenario Builder
+can read them to shape its own directions.
+
 ## Examples
 
 **Scenario Builder** - what a character remembers, most important first:

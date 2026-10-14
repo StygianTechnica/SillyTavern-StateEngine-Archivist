@@ -18,6 +18,7 @@ import { addSettingsDrawer } from './ui/settings-drawer.js';
 import { startChatLifecycle } from './memory/chat-lifecycle.js';
 import { startMessageSync } from './memory/message-sync.js';
 import { startCompiler } from './compiler/compiler.js';
+import { startPhraseTics } from './compiler/phrase-tic-tracker.js';
 import { startPromptContext, CONTEXT_CAPABILITIES, CONTEXT_VARIABLE_NAMES } from './context/prompt-sync.js';
 
 // What Archivist provides to other extensions (see docs/architecture.md,
@@ -99,6 +100,7 @@ export async function initExtension() {
     }
     try {
         startCompiler();
+        startPhraseTics();
     } catch (err) {
         console.error(`${LOG_PREFIX} the compiler failed to start.`, err);
     }

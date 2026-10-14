@@ -455,7 +455,7 @@ describe('compiling through the independent preset', () => {
         expect(preset.independentPreset).toBe(true);
         expect(preset.independentConfig.promptedHeader).toBe(COMPILER_HEADER);
         expect([...preset.variables.keys()]).toEqual([
-            'archivist__compiled_facts', 'archivist__compiled_relationships', 'archivist__compiled_characters', 'archivist__compiled_story_summary', 'archivist__compiled_scene_summary',
+            'archivist__compiled_facts', 'archivist__compiled_relationships', 'archivist__compiled_characters', 'archivist__compiled_story_summary', 'archivist__compiled_scene_summary', 'archivist__compiled_phrase_tics',
         ]);
         expect(preset.variables.get('archivist__compiled_story_summary')).toMatchObject({ type: 'string', prompted: { newEachTurn: true } });
         expect(preset.variables.get('archivist__compiled_facts').prompted.newEachTurn).toBe(true);

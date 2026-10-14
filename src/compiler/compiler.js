@@ -34,6 +34,8 @@ import { getVariable, createVariable, updateVariable, getVariableValue, setVaria
 import { createIndependentPreset, configureIndependentPreset, updateIndependentPresetContext } from '../api/independent-presets.js';
 import { listObjectTypeIds, getObjectByAlias, getObject, listObjects } from '../api/objects.js';
 import { objectNameIndex, relinkCompiled, aliasSuggestions, baseName, mergeQualifiedNames } from './entity-link.js';
+import { candidateLines, parseTicAnswer } from './phrase-tics.js';
+import { currentCandidates, recordFoundTics } from './phrase-tic-tracker.js';
 import { getAllMemories, MEMORIES_CHANGED_EVENT } from '../memory/archivist.js';
 import { getCurrentChatRef, chatKeyFor, getChatEntry, findChatEntriesById, updateChatEntry, compiledFileFor } from '../memory/registry.js';
 import { readJsonFile, writeJsonFile } from '../memory/storage.js';
@@ -51,6 +53,7 @@ export const RELATIONSHIPS_VARIABLE = 'compiled_relationships';
 export const CHARACTERS_VARIABLE = 'compiled_characters';
 export const STORY_SUMMARY_VARIABLE = 'compiled_story_summary';
 export const SCENE_SUMMARY_VARIABLE = 'compiled_scene_summary';
+export const PHRASE_TICS_VARIABLE = 'compiled_phrase_tics';
 export const THREADS_VARIABLE = 'compiled_threads';
 export const WORLD_VARIABLE = 'compiled_world';
 
@@ -63,7 +66,8 @@ export const WORLD_VARIABLE = 'compiled_world';
 // 4: a character's summary (who they are now); SCENE facts end with their
 // scene.
 // 5: names without a description in brackets.
-export const COMPILER_VARIABLE_VERSION = 5;
+// 6: phrase tics.
+export const COMPILER_VARIABLE_VERSION = 6;
 
 // New memories per compile run.
 export const COMPILE_BATCH = 60;
@@ -168,6 +172,12 @@ const SCENE_SUMMARY_INSTRUCTIONS = [
     'Present tense. No commentary.',
 ].join(' ');
 
+const PHRASE_TICS_INSTRUCTIONS = [
+    'The narration\'s phrase tics: from the "Repeated phrases in the latest replies" (each with a ref like [p2] and an example), the ones that are stock wording the writing leans on - a repeated gesture, emotional cue, descriptive beat or sentence pattern ("a wry smile tugged at his lips", "his tone turned serious", "shot a sidelong glance").',
+    'Leave out names, places and things the story needs to repeat, and a character\'s deliberate catchphrase or way of speaking.',
+    'Each item is an object: {"ref": its [p...] ref; "phrase": the tic as written, trimmed to the stock wording itself}. [] when none of them is a tic, or none are listed.',
+].join(' ');
+
 // A prompted text answer (the summaries), read and cleared like the lists.
 function summaryDef(instructions, label) {
     return {
@@ -208,6 +218,7 @@ const PRESETS = [
             [CHARACTERS_VARIABLE, () => variableDef(CHARACTERS_INSTRUCTIONS, 'Compiled character insights', { name: { type: 'string' } })],
             [STORY_SUMMARY_VARIABLE, () => summaryDef(STORY_SUMMARY_INSTRUCTIONS, 'Compiled story summary')],
             [SCENE_SUMMARY_VARIABLE, () => summaryDef(SCENE_SUMMARY_INSTRUCTIONS, 'Compiled scene summary')],
+            [PHRASE_TICS_VARIABLE, () => variableDef(PHRASE_TICS_INSTRUCTIONS, 'Compiled phrase tics', { ref: { type: 'string' }, phrase: { type: 'string' } })],
         ],
     },
     {
@@ -473,13 +484,18 @@ async function compileRun(ref, { rebuild }) {
     for (let i = 0; i < added.length; i += COMPILE_BATCH) batches.push(added.slice(i, i + COMPILE_BATCH));
     if (batches.length === 0) batches.push([]);
     setStatus({ batches: batches.length });
+    // Phrase tics: the latest replies' repeated wording, judged once - with
+    // the last batch, the one nearest to them.
+    const candidates = currentCandidates();
 
     for (let b = 0; b < batches.length; b++) {
         setStatus({ batch: b + 1, part: 'memory' });
         const batch = batches[b];
         const refs = refsFor(batch);
-        const memory = await runPart(COMPILER_PRESET, [FACTS_VARIABLE, RELATIONSHIPS_VARIABLE, CHARACTERS_VARIABLE, STORY_SUMMARY_VARIABLE, SCENE_SUMMARY_VARIABLE],
-            compileContext(compiled, batch, nameOf), ref.chatId);
+        const last = b === batches.length - 1;
+        const memory = await runPart(COMPILER_PRESET, [FACTS_VARIABLE, RELATIONSHIPS_VARIABLE, CHARACTERS_VARIABLE, STORY_SUMMARY_VARIABLE, SCENE_SUMMARY_VARIABLE, PHRASE_TICS_VARIABLE],
+            compileContext(compiled, batch, nameOf, candidateLines(last ? candidates : [])), ref.chatId);
+        if (last) recordFoundTics(chatKey, parseTicAnswer(memory[PHRASE_TICS_VARIABLE], candidates));
         let world = { [THREADS_VARIABLE]: [], [WORLD_VARIABLE]: [] };
         if (withWorld) {
             setStatus({ part: 'world' });

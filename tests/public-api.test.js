@@ -5,7 +5,8 @@ import { getCurrentChatRef } from '../src/memory/registry.js';
 describe('public API', () => {
     it('exposes exactly the three query APIs, the compiled memory, the dossier and the change events, read-only', () => {
         expect(Object.keys(archivistApi).sort()).toEqual([
-            'COMPILED_CHANGED_EVENT', 'MEMORIES_CHANGED_EVENT', 'getAllMemories', 'getCompiledMemory', 'getEntityDossier', 'getMemoriesBySubtype', 'getMemoriesForEntity', 'getRelationship',
+            'COMPILED_CHANGED_EVENT', 'MEMORIES_CHANGED_EVENT', 'PHRASE_TICS_CHANGED_EVENT', 'getAllMemories', 'getCompiledMemory', 'getEntityDossier', 'getMemoriesBySubtype',
+            'getMemoriesForEntity', 'getPhraseTics', 'getRelationship',
         ]);
         expect(Object.isFrozen(archivistApi)).toBe(true);
     });

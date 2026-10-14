@@ -44,6 +44,12 @@ const DEFAULTS = {
     compileWorld: true,
     // Which version of the compiler preset's variables is installed.
     compilerVariableVersion: null,
+    // Phrase tics (src/compiler/phrase-tics.js): the compiler finds the
+    // narration's repeated stock phrases, each reply is checked against
+    // them, and Curator can ask the model to vary its wording...
+    trackPhraseTics: true,
+    // ...and a tic loses a count after this many AI replies without it.
+    phraseTicFadeAfter: 10,
 };
 
 // Returns the live settings object, creating it (and filling in any
