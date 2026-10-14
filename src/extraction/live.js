@@ -53,7 +53,8 @@ const OLD_LIVE_PRESET_NAMES = ['Live'];
 // 3: who was present, prioritization tags, emotional tone.
 // 4: at most LIVE_MAX_MEMORIES, optional present/tags/tone, ANSWER LAST.
 // 5: the prompt-context variables' labels (no "Archivist:" prefix).
-export const LIVE_VARIABLE_VERSION = 5;
+// 6: the scene and scene-characters descriptions.
+export const LIVE_VARIABLE_VERSION = 6;
 
 const harvests = new Map(); // chatId -> { running, again, retry: items[] }
 

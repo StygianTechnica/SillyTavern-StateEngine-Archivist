@@ -494,3 +494,61 @@
 .ar-mb-settled {
     opacity: 0.6;
 }
+
+/* Editing the compiled memory (src/ui/compiled-edit.js). The buttons stay
+   out of the way until the row is hovered. */
+.ar-mb-item-buttons {
+    display: inline-flex;
+    gap: 2px;
+    margin-left: auto;
+    opacity: 0.45;
+}
+
+.ar-mb-fact:hover .ar-mb-item-buttons,
+.ar-mb-profile-head:hover .ar-mb-item-buttons,
+.ar-mb-item-buttons:focus-within {
+    opacity: 1;
+}
+
+.ar-mb-item-button {
+    margin: 0;
+    padding: 2px 5px;
+    font-size: 0.95em;
+}
+
+.ar-mb-editing {
+    border-left-color: var(--SmartThemeQuoteColor);
+}
+
+.ar-mb-edit {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.ar-mb-edit-row {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin: 0;
+}
+
+.ar-mb-edit-label {
+    font-size: 0.8em;
+    opacity: 0.75;
+}
+
+.ar-mb-edit-row .text_pole {
+    margin: 0;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.ar-mb-edit-row textarea.text_pole {
+    resize: vertical;
+}
+
+.ar-mb-edit-buttons {
+    display: flex;
+    gap: 6px;
+}

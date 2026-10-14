@@ -119,6 +119,9 @@ export const SECRET_STATUSES = Object.freeze(['kept', 'revealed', 'disproven']);
 export function normalizeSecretStatus(value) {
     const token = String(value ?? '').trim().toLowerCase();
     if (SECRET_STATUSES.includes(token)) return token;
+    // "known only to Varyn", "hidden", "still secret": kept - not the
+    // "known" of a revealed secret.
+    if (/\b(only|hidden|secret|concealed|unknown|unrevealed|not (yet )?(known|revealed))\b/.test(token)) return 'kept';
     if (/^(reveal|exposed|known|out|discovered|public)/.test(token)) return 'revealed';
     if (/^(disprov|false|wrong|untrue|debunk|refuted|mistaken)/.test(token)) return 'disproven';
     return 'kept';

@@ -13,8 +13,11 @@
 //                   intensity, trend, text, sources } - one per direction
 //                   of a pair; `type` is the model's own words (friend,
 //                   mentor, rival...), never a fixed list
-//   character     { entity, traits, habits, stressors, motivations: [text],
-//                   arc, emotional_state, sources } - inferred insights
+//   character     { entity, summary, traits, habits, stressors,
+//                   motivations: [text], arc, emotional_state, sources } -
+//                   inferred insights; `summary` is who they are NOW, what
+//                   their actions so far show of them
+//   (any item)    edited_at - set when the user edited it (memory browser)
 //   thread        { id: "t<n>", kind, title, text, status, progress,
 //                   entity (an object of its title - a quest - or null),
 //                   involved: [entity], sources } - plot hooks, open
@@ -22,8 +25,13 @@
 //   world entry   { id: "w<n>", kind (WORLD_KINDS), name, text,
 //                   entity (the object it names, or null), known_by:
 //                   [entity] (secrets), involved: [entity], status, sources }
-//   summary       { story, scene } - the story so far, the current scene
-//                 (the memory part's two summaries; '' until compiled)
+//   summary       { story, scene, sceneAt } - the story so far, the current
+//                 scene (the memory part's two summaries; '' until
+//                 compiled), and the newest message the scene summary was
+//                 written from (null when unknown)
+//   dismissed     [{ kind, key, label }] - items the user deleted
+//                 (dismissKey()); a later answer that brings one back is
+//                 left out, so a rebuild does not restore them either
 //   schema        COMPILED_SCHEMA when compiled; an older state (1: facts
 //                 and relationships only) is still read, and flagged
 //                 `outdated` in the view until rebuilt
@@ -33,7 +41,10 @@
 // (threads, world). Each hands the model its current lists plus a batch of
 // new memories (each as [m<n>]) and gets back the complete, updated lists;
 // the parse* functions turn that answer into the next state, keeping each
-// continued item's earlier sources. buildCompiledView() turns a state into
+// continued item's earlier sources. An item the answer leaves out is KEPT
+// (carriedForward()): models drop items from a long list without meaning
+// to - a relationship, a secret, a quest seed - so only facts are ever
+// dropped by the model ("no longer true"). The user removes the rest. buildCompiledView() turns a state into
 // what the API returns, colour-tagged, every item linked back to the chat
 // messages it rests on (through its source memories, whose message indexes
 // message-sync keeps current).
@@ -47,15 +58,27 @@ import { parseSource, messageDateOf } from '../memory/message-sync-plan.js';
 export const COMPILED_SCHEMA = 2;
 
 export const EMPTY_COMPILED = Object.freeze({
-    facts: [], relationships: [], characters: [], threads: [], world: [], summary: Object.freeze({ story: '', scene: '' }),
-    included: [], compiledAt: null, schema: COMPILED_SCHEMA,
+    facts: [], relationships: [], characters: [], threads: [], world: [], summary: Object.freeze({ story: '', scene: '', sceneAt: null }),
+    dismissed: [], included: [], compiledAt: null, schema: COMPILED_SCHEMA,
 });
 
 // The next summary from the model's answers (strings): each one given
-// replaces the previous, a missing or empty one keeps it.
-export function parseSummary(story, scene, previous) {
+// replaces the previous, a missing or empty one keeps it. `sceneAt`: the
+// newest message of the batch - when the scene summary is a new one.
+export function parseSummary(story, scene, previous, sceneAt = null) {
     const clean = (value) => (typeof value === 'string' ? value.trim() : '');
-    return { story: clean(story) || previous?.story || '', scene: clean(scene) || previous?.scene || '' };
+    const newScene = clean(scene);
+    return {
+        story: clean(story) || previous?.story || '',
+        scene: newScene || previous?.scene || '',
+        sceneAt: newScene ? (sceneAt ?? previous?.sceneAt ?? null) : (previous?.sceneAt ?? null),
+    };
+}
+
+// The newest message index among `records` (null when none has one).
+export function newestMessageIndex(records) {
+    const indexes = (records ?? []).map((r) => messageIndexOf(r)).filter((i) => i !== null);
+    return indexes.length ? Math.max(...indexes) : null;
 }
 
 const isText = (value) => typeof value === 'string' && value.trim() !== '';
@@ -68,6 +91,39 @@ const words = (token) => String(token ?? '').replace(/_/g, ' ');
 const messageIndexOf = (record) => parseSource(record?.source_message_id)?.index ?? null;
 const entityKey = (e) => (e.id ?? `name:${String(e.name ?? '').toLowerCase()}`);
 const nameOfEntity = (e) => e?.name ?? '';
+// Words only: "the Old Inn", "old inn." -> "inn old".
+const looseKey = (value) => String(value ?? '').toLowerCase().replace(/['’]s\b/g, '').split(/[^\p{L}\p{N}]+/u)
+    .filter((w) => w && !['a', 'an', 'the'].includes(w)).sort().join(' ');
+
+// ---- dismissed items
+
+// What identifies an item the user deleted, so the model can't bring it
+// back: its words, not its id - a rebuild gives new ids. '' for none.
+export function dismissKey(kind, item) {
+    if (!item) return '';
+    const nameOf = (value) => (typeof value === 'string' ? value : nameOfEntity(value));
+    switch (kind) {
+        case 'fact': return looseKey(item.text);
+        case 'relationship': return `${looseKey(nameOf(item.from))}|${looseKey(nameOf(item.to))}`;
+        case 'character': return looseKey(item.entity ? nameOfEntity(item.entity) : item.name);
+        case 'thread': return looseKey(item.title || item.text);
+        case 'world': return `${normalizeWorldKind(item.kind)}:${looseKey(item.name || item.text)}`;
+        default: return '';
+    }
+}
+
+// (kind, item) -> whether the user deleted an item like it.
+export function dismissedTest(dismissed) {
+    const keys = new Set((dismissed ?? []).map((d) => `${d.kind}#${d.key}`));
+    return (kind, item) => keys.size > 0 && keys.has(`${kind}#${dismissKey(kind, item)}`);
+}
+
+// `next` plus every item of `previousItems` it left out (by `keyOf`), in
+// their earlier order after the answer's own.
+export function carriedForward(next, previousItems, keyOf) {
+    const seen = new Set(next.map(keyOf));
+    return [...next, ...(previousItems ?? []).filter((item) => !seen.has(keyOf(item)))];
+}
 
 // ---- the run's context
 
@@ -108,6 +164,7 @@ function relationshipLine(r) {
 
 function characterLine(c) {
     const parts = [];
+    if (c.summary) parts.push(`now: ${c.summary}`);
     for (const field of ['traits', 'habits', 'stressors', 'motivations']) if (c[field]?.length) parts.push(`${field}: ${c[field].join(', ')}`);
     if (c.arc) parts.push(`arc: ${c.arc}`);
     if (c.emotional_state) parts.push(`feeling: ${c.emotional_state}`);
@@ -135,8 +192,15 @@ export function compileContext(previous, batch, nameOf = () => null) {
     lines.push('Characters:');
     if (!previous.characters?.length) lines.push('(none yet)');
     for (const c of previous.characters ?? []) lines.push(characterLine(c));
+    lines.push(...dismissedLines(previous, ['fact', 'relationship', 'character']));
     lines.push(...newMemoryLines(batch, nameOf));
     return lines.join('\n');
+}
+
+// What the user deleted, so the model does not add it again.
+function dismissedLines(previous, kinds) {
+    const labels = (previous.dismissed ?? []).filter((d) => kinds.includes(d.kind) && d.label).map((d) => `- ${d.label}`);
+    return labels.length ? ['Removed by the user - do not add these again:', ...labels] : [];
 }
 
 // What the WORLD part's model reads: the current threads and world entries,
@@ -154,6 +218,7 @@ export function worldContext(previous, batch, nameOf = () => null) {
         const knownBy = entityList(w.known_by);
         lines.push(`[${w.id}] ${w.kind} · ${w.name}${knownBy ? ` · known by ${knownBy}` : ''}${w.status ? ` · ${w.status}` : ''}: ${w.text}`);
     }
+    lines.push(...dismissedLines(previous, ['thread', 'world']));
     lines.push(...newMemoryLines(batch, nameOf));
     return lines.join('\n');
 }
@@ -201,9 +266,10 @@ function idAssigner(prefix, previousItems) {
 export function parseCompileOutput(rawFacts, rawRelationships, { previous, refs, recordsById, resolve }) {
     const previousById = new Map(previous.facts.map((f) => [f.id, f]));
     const nextId = idAssigner('f', previous.facts);
+    const dismissed = dismissedTest(previous.dismissed);
     const facts = [];
     for (const raw of Array.isArray(rawFacts) ? rawFacts : []) {
-        if (!raw || typeof raw !== 'object' || !isText(raw.text)) continue;
+        if (!raw || typeof raw !== 'object' || !isText(raw.text) || dismissed('fact', raw)) continue;
         const id = nextId(raw);
         const sources = [...new Set([...(previousById.get(id)?.sources ?? []), ...sourceIdsOf(raw.sources, refs)])];
         facts.push({
@@ -226,18 +292,14 @@ export function parseCompileOutput(rawFacts, rawRelationships, { previous, refs,
 // One relationship per direction of a pair: from -> to.
 const relKey = (r) => `${entityKey(r.from)}|${entityKey(r.to)}`;
 
-// An empty answer for a list that had items is taken as the model leaving
-// it out, not as everything in it ending: the previous items are kept.
-function keepIfLeftOut(next, previousItems) {
-    return next.length === 0 && previousItems.length > 0 ? previousItems : next;
-}
-
 export function parseRelationships(rawRelationships, { previous, refs, resolve }) {
     const previousRel = new Map((previous.relationships ?? []).map((r) => [relKey(r), r]));
+    const dismissed = dismissedTest(previous.dismissed);
     const relationships = [];
     const seen = new Set();
     for (const raw of Array.isArray(rawRelationships) ? rawRelationships : []) {
         if (!raw || typeof raw !== 'object' || !isText(raw.from) || !isText(raw.to) || !isText(raw.type)) continue;
+        if (dismissed('relationship', raw)) continue;
         const rel = {
             from: resolve(raw.from.trim()),
             to: resolve(raw.to.trim()),
@@ -255,7 +317,7 @@ export function parseRelationships(rawRelationships, { previous, refs, resolve }
         if (!rel.text) rel.text = `${rel.from.name} -> ${rel.to.name}: ${rel.type}.`;
         relationships.push(rel);
     }
-    return keepIfLeftOut(relationships, previous.relationships ?? []);
+    return carriedForward(relationships, previous.relationships, relKey);
 }
 
 const phraseList = (value) => names(value).map((p) => p.replace(/\.$/, ''));
@@ -263,16 +325,19 @@ const phraseList = (value) => names(value).map((p) => p.replace(/\.$/, ''));
 // Character insights, one per entity.
 export function parseCharacters(rawCharacters, { previous, refs, resolve }) {
     const previousByKey = new Map((previous.characters ?? []).map((c) => [entityKey(c.entity), c]));
+    const dismissed = dismissedTest(previous.dismissed);
     const characters = [];
     const seen = new Set();
     for (const raw of Array.isArray(rawCharacters) ? rawCharacters : []) {
-        if (!raw || typeof raw !== 'object' || !isText(raw.name)) continue;
+        if (!raw || typeof raw !== 'object' || !isText(raw.name) || dismissed('character', raw)) continue;
         const entity = resolve(raw.name.trim());
         const key = entityKey(entity);
         if (seen.has(key)) continue;
         seen.add(key);
         characters.push({
             entity,
+            // A missing summary keeps the last one.
+            summary: text(raw.summary) || previousByKey.get(key)?.summary || '',
             traits: phraseList(raw.traits),
             habits: phraseList(raw.habits),
             stressors: phraseList(raw.stressors),
@@ -282,7 +347,31 @@ export function parseCharacters(rawCharacters, { previous, refs, resolve }) {
             sources: [...new Set([...(previousByKey.get(key)?.sources ?? []), ...sourceIdsOf(raw.sources, refs)])],
         });
     }
-    return keepIfLeftOut(characters, previous.characters ?? []);
+    return carriedForward(characters, previous.characters, (c) => entityKey(c.entity));
+}
+
+// A thread or world entry the answer gives a NEW id while it is plainly a
+// current one (same words in its title or name, and the current one not
+// answered under its own id) continues that one. `raws` are the answer's
+// items; returns them with ids filled in where so.
+function matchByWords(raws, previousItems, wordsOf, prefix) {
+    const pattern = new RegExp(`^${prefix}\\d+$`);
+    const previousIds = new Set(previousItems.map((item) => item.id));
+    const answered = new Set(raws.map((raw) => String(raw?.id ?? '').trim()).filter((id) => previousIds.has(id)));
+    const byWords = new Map();
+    for (const item of previousItems) {
+        const key = wordsOf(item);
+        if (key && !answered.has(item.id) && !byWords.has(key)) byWords.set(key, item.id);
+    }
+    return raws.map((raw) => {
+        if (!raw || typeof raw !== 'object') return raw;
+        const id = String(raw.id ?? '').trim();
+        if (pattern.test(id) && previousIds.has(id)) return raw;
+        const match = byWords.get(wordsOf(raw));
+        if (!match) return raw;
+        byWords.delete(wordsOf(raw));
+        return { ...raw, id: match };
+    });
 }
 
 // Story threads: plot hooks, unresolved threads, quest seeds. `resolve`
@@ -290,9 +379,11 @@ export function parseCharacters(rawCharacters, { previous, refs, resolve }) {
 export function parseThreads(rawThreads, { previous, refs, resolve }) {
     const previousById = new Map((previous.threads ?? []).map((t) => [t.id, t]));
     const nextId = idAssigner('t', previous.threads ?? []);
+    const dismissed = dismissedTest(previous.dismissed);
     const threads = [];
-    for (const raw of Array.isArray(rawThreads) ? rawThreads : []) {
-        if (!raw || typeof raw !== 'object' || !(isText(raw.text) || isText(raw.title))) continue;
+    const raws = matchByWords(Array.isArray(rawThreads) ? rawThreads : [], previous.threads ?? [], (t) => looseKey(t?.title), 't');
+    for (const raw of raws) {
+        if (!raw || typeof raw !== 'object' || !(isText(raw.text) || isText(raw.title)) || dismissed('thread', raw)) continue;
         const id = nextId(raw);
         const title = text(raw.title) || text(raw.text).split(/[.!?]/)[0].slice(0, 80);
         const linked = resolve(title);
@@ -308,16 +399,18 @@ export function parseThreads(rawThreads, { previous, refs, resolve }) {
             sources: [...new Set([...(previousById.get(id)?.sources ?? []), ...sourceIdsOf(raw.sources, refs)])],
         });
     }
-    return keepIfLeftOut(threads, previous.threads ?? []);
+    return carriedForward(threads, previous.threads, (t) => t.id);
 }
 
 // World entries: secrets, locations, factions, items, events, lore.
 export function parseWorld(rawWorld, { previous, refs, resolve }) {
     const previousById = new Map((previous.world ?? []).map((w) => [w.id, w]));
     const nextId = idAssigner('w', previous.world ?? []);
+    const dismissed = dismissedTest(previous.dismissed);
     const world = [];
-    for (const raw of Array.isArray(rawWorld) ? rawWorld : []) {
-        if (!raw || typeof raw !== 'object' || !(isText(raw.text) || isText(raw.name))) continue;
+    const raws = matchByWords(Array.isArray(rawWorld) ? rawWorld : [], previous.world ?? [], (w) => (w?.name ? `${normalizeWorldKind(w.kind)}:${looseKey(w.name)}` : ''), 'w');
+    for (const raw of raws) {
+        if (!raw || typeof raw !== 'object' || !(isText(raw.text) || isText(raw.name)) || dismissed('world', raw)) continue;
         const id = nextId(raw);
         const kind = normalizeWorldKind(raw.kind);
         const name = text(raw.name) || text(raw.text).split(/[.!?]/)[0].slice(0, 80);
@@ -335,7 +428,122 @@ export function parseWorld(rawWorld, { previous, refs, resolve }) {
             sources: [...new Set([...(previousById.get(id)?.sources ?? []), ...sourceIdsOf(raw.sources, refs)])],
         });
     }
-    return keepIfLeftOut(world, previous.world ?? []);
+    return carriedForward(world, previous.world, (w) => w.id);
+}
+
+// ---- the user's edits (the memory browser)
+
+// Each kind of item: its list in the compiled state, and its key there.
+const ITEM_LISTS = Object.freeze({
+    fact: ['facts', (f) => f.id],
+    relationship: ['relationships', relKey],
+    character: ['characters', (c) => entityKey(c.entity)],
+    thread: ['threads', (t) => t.id],
+    world: ['world', (w) => w.id],
+});
+export const EDITABLE_KINDS = Object.freeze(Object.keys(ITEM_LISTS));
+
+// The key editCompiledItem() and removeCompiledItem() find `item` by.
+export function compiledItemKey(kind, item) {
+    return ITEM_LISTS[kind] ? String(ITEM_LISTS[kind][1](item)) : '';
+}
+
+// A user's text for a list ("kind, stubborn" or ['kind']) as phrases.
+const phrasesFrom = (value) => phraseList(typeof value === 'string' ? value.split(/[,\n]/) : value);
+const has = (patch, field) => Object.prototype.hasOwnProperty.call(patch, field);
+
+// `item` with the user's `patch` applied - only the fields a user edits,
+// each normalized like the model's answer.
+function patched(kind, item, patch) {
+    const next = { ...item };
+    const set = (field, fn) => {
+        if (has(patch, field)) next[field] = fn(patch[field]);
+    };
+    switch (kind) {
+        case 'fact':
+            set('text', (v) => text(v) || item.text);
+            set('classification', (v) => normalizeClassification(v, item.classification));
+            set('theme', (v) => text(v).toLowerCase() || 'general');
+            break;
+        case 'relationship':
+            set('type', (v) => text(v).toLowerCase() || item.type);
+            set('polarity', normalizePolarity);
+            set('intensity', normalizeIntensity);
+            set('trend', normalizeTrend);
+            set('text', text);
+            break;
+        case 'character':
+            set('summary', text);
+            for (const field of ['traits', 'habits', 'stressors', 'motivations']) set(field, phrasesFrom);
+            set('arc', text);
+            set('emotional_state', text);
+            break;
+        case 'thread':
+            set('title', (v) => text(v) || item.title);
+            set('kind', (v) => text(v).toLowerCase() || item.kind);
+            set('status', normalizeThreadStatus);
+            set('text', (v) => text(v) || item.text);
+            set('progress', text);
+            break;
+        case 'world':
+            set('name', (v) => text(v) || item.name);
+            set('kind', normalizeWorldKind);
+            set('text', (v) => text(v) || item.text);
+            set('known_by', (v) => phrasesFrom(v).map((name) => item.known_by?.find((e) => e.name === name) ?? { id: null, name, type: null }));
+            next.status = next.kind === 'secret' ? normalizeSecretStatus(has(patch, 'status') ? patch.status : item.status) : (has(patch, 'status') ? text(patch.status).toLowerCase() : item.status);
+            break;
+        default:
+    }
+    return { ...next, edited_at: new Date().toISOString() };
+}
+
+// `compiled` with item `key` of `kind` changed by the user's `patch`, or
+// null when there is no such item.
+export function editCompiledItem(compiled, kind, key, patch = {}) {
+    const [listName, keyOf] = ITEM_LISTS[kind] ?? [];
+    const items = compiled?.[listName];
+    if (!Array.isArray(items)) return null;
+    const index = items.findIndex((item) => String(keyOf(item)) === String(key));
+    if (index === -1) return null;
+    const list = [...items];
+    list[index] = patched(kind, items[index], patch ?? {});
+    return { ...compiled, [listName]: list };
+}
+
+// What the dismissed list (and the model) calls a deleted item.
+function dismissLabel(kind, item) {
+    switch (kind) {
+        case 'fact': return item.text;
+        case 'relationship': return `${item.from?.name} -> ${item.to?.name} (${item.type})`;
+        case 'character': return `insights about ${item.entity?.name}`;
+        case 'thread': return `${item.kind}: ${item.title}`;
+        case 'world': return `${item.kind}: ${item.name}`;
+        default: return '';
+    }
+}
+
+// `compiled` without item `key` of `kind` - remembered as dismissed, so no
+// later compile brings it back - or null when there is no such item.
+export function removeCompiledItem(compiled, kind, key) {
+    const [listName, keyOf] = ITEM_LISTS[kind] ?? [];
+    const items = compiled?.[listName];
+    const item = Array.isArray(items) ? items.find((i) => String(keyOf(i)) === String(key)) : null;
+    if (!item) return null;
+    const next = { ...compiled, [listName]: items.filter((i) => i !== item) };
+    if (kind === 'fact') next.facts = next.facts.map((f) => (f.contradicts?.includes(item.id) ? { ...f, contradicts: f.contradicts.filter((id) => id !== item.id) } : f));
+    const dismissKeyOfItem = dismissKey(kind, item);
+    if (dismissKeyOfItem) {
+        const others = (compiled.dismissed ?? []).filter((d) => !(d.kind === kind && d.key === dismissKeyOfItem));
+        next.dismissed = [...others, { kind, key: dismissKeyOfItem, label: dismissLabel(kind, item) }];
+    }
+    return next;
+}
+
+// `compiled` with the user's text for the story ('story') or scene
+// ('scene') summary.
+export function editCompiledSummary(compiled, which, value) {
+    if (which !== 'story' && which !== 'scene') return null;
+    return { ...compiled, summary: { ...(compiled.summary ?? {}), [which]: text(value) } };
 }
 
 // ---- what is new since the last compile
@@ -416,13 +624,15 @@ export function recentSceneMemories(records, window = SCENE_WINDOW) {
 // (deleted memories and other swipes' left out). `nameOf(id)` gives names
 // for the witnesses on the timeline (null when unknown).
 //   { compiledAt, outdated, story_summary, scene_summary (the compiler's
-//     own summaries, '' until compiled with them),
+//     own summaries, '' until compiled with them), scene_summary_at (the
+//     newest message the scene summary saw, or null), newest_message_index,
 //     scene_recent: recentSceneMemories() - the scene from the memories,
-//     character_profiles: [{ entity_id, entity_type, name, facts, traits,
-//       habits, stressors, motivations, arc, emotional_state,
-//       relationships: [relationship with direction 'out' | 'in'] }],
+//     character_profiles: [{ entity_id, entity_type, name, facts, summary,
+//       traits, habits, stressors, motivations, arc, emotional_state,
+//       relationships: [relationship with direction 'out' | 'in'],
+//       insights_key (compiledItemKey of its insights, null without) }],
 //     scene_state: [fact], session_details: [fact],
-//     relationships: [relationship], relationship_map: { entities: [entity],
+//     relationships: [relationship + item_key], relationship_map: { entities: [entity],
 //       cells: [{ from, to, polarity, polarity_label, type, intensity }] },
 //     threads: [thread], quests: [thread] (those with an object or kind
 //       quest), world: { secret: [...], location: [...], ... },
@@ -449,7 +659,7 @@ export function buildCompiledView(compiled, records, nameOf = () => null) {
         classification: f.classification, contradiction: contradicted.has(f.id),
     }));
     const relationships = (compiled.relationships ?? []).filter((r) => stands(r, present))
-        .map((r) => withColorTag(withMessageLinks(relationshipView(r), byId), { relationship: true }));
+        .map((r) => withColorTag(withMessageLinks({ ...relationshipView(r), item_key: relKey(r) }, byId), { relationship: true }));
     const characters = (compiled.characters ?? []).filter((c) => stands(c, present));
 
     // Profiles: one per entity with lasting facts or character insights.
@@ -459,7 +669,8 @@ export function buildCompiledView(compiled, records, nameOf = () => null) {
         if (!profiles.has(key)) {
             profiles.set(key, {
                 entity_id: entity.id ?? null, entity_type: entity.type ?? null, name: entity.name || 'General', facts: [],
-                traits: [], habits: [], stressors: [], motivations: [], arc: '', emotional_state: '', relationships: [],
+                summary: '', traits: [], habits: [], stressors: [], motivations: [], arc: '', emotional_state: '', relationships: [],
+                insights_key: null,
             });
         }
         return profiles.get(key);
@@ -469,7 +680,7 @@ export function buildCompiledView(compiled, records, nameOf = () => null) {
     }
     for (const c of characters) {
         const { entity, sources, ...insights } = c;
-        Object.assign(profileOf(entity), insights, { source_memory_ids: sources.filter((id) => present.has(id)) });
+        Object.assign(profileOf(entity), insights, { insights_key: entityKey(entity), source_memory_ids: sources.filter((id) => present.has(id)) });
     }
     for (const r of relationships) {
         if (profiles.has(entityKey(r.from))) profiles.get(entityKey(r.from)).relationships.push({ ...r, direction: 'out', other: r.to });
@@ -508,6 +719,8 @@ export function buildCompiledView(compiled, records, nameOf = () => null) {
         outdated: (compiled.schema ?? 1) < COMPILED_SCHEMA,
         story_summary: compiled.summary?.story ?? '',
         scene_summary: compiled.summary?.scene ?? '',
+        scene_summary_at: compiled.summary?.sceneAt ?? null,
+        newest_message_index: newestMessageIndex(records),
         character_profiles: [...profiles.values()].sort((a, b) => a.name.localeCompare(b.name)),
         scene_state: tagged.filter((f) => f.classification === 'SCENE'),
         scene_recent: recentSceneMemories(records),

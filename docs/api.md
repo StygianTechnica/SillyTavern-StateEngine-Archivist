@@ -127,6 +127,9 @@ guide): `null` when it was never compiled. `chat_id` works as for
   pending,                     // memories stored since, not compiled in yet
   outdated,                    // true: compiled before insights, threads and the world
                                // existed - a Rebuild fills them in for the whole chat
+  story_summary, scene_summary,  // the compiler's two summaries ('' until written)
+  scene_summary_at,            // the newest message index the scene summary saw (null: unknown)
+  newest_message_index,        // the newest message any memory comes from (null: none)
   character_profiles: [profile],
   scene_state: [fact],         // SCENE facts
   session_details: [fact],     // SESSION facts
@@ -165,8 +168,10 @@ button for each).
 profile = {
   entity_id, entity_type, name,
   facts: [fact],                            // its PERMANENT facts
+  summary,                                  // who they are NOW - what their actions so far show
   traits, habits, stressors, motivations,   // [text] - inferred from the memories
   arc, emotional_state,                     // text
+  insights_key,                             // identifies its insights (null without any)
   relationships: [relationship & { direction: 'out' | 'in', other: entity }],
 }
 
@@ -194,6 +199,7 @@ relationship = {                            // one per direction: how "from" see
   trend,                                    // 'warming' | 'cooling' | 'stable' | 'volatile' | ''
   tag, color_tag: 'Purple', color_name: 'Relationship', color_hex,
   chat_id, source_memory_ids, source_messages, message_range,
+  item_key,                                 // identifies it (from and to)
 }
 
 thread = {

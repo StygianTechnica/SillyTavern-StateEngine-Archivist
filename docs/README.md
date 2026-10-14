@@ -170,6 +170,21 @@ compiler is doing, or why the last compile failed, and **Compile now** and
 memories that are gone - a regenerated reply, another swipe - drops out of
 the view until they are back.
 
+Everything the compiler wrote can be corrected there: hover a fact, a
+relationship, a character's insights, a story thread or quest, a world entry
+or a summary for its **pencil** (edit) and **bin** (delete) buttons. A
+deleted item stays deleted - later compiles, and a Rebuild, leave it out -
+while the memories it came from are kept. Edited items are marked *edited*.
+
+Each character the memories show enough of gets a **summary** - who they are
+*now*, judged by what they have done so far - rewritten as the story moves on,
+alongside their traits, habits, stressors, motivations, arc and feeling.
+
+The compiler keeps relationships, characters, threads and world entries
+(secrets included) even when its answer leaves one out - a long list loses
+items by accident, not on purpose. Only you delete them; facts are the one
+thing the model drops itself, when the story shows they no longer hold.
+
 The compiler uses two State Engine presets of its own, **Archivist Memory
 Compiler** and **Archivist World Compiler** (independent presets). State
 Engine queues their runs, catch-up's and its own per-message update on the

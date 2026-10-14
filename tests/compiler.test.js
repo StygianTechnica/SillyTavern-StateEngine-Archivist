@@ -11,8 +11,11 @@ import { getSettings } from '../src/settings.js';
 import { colorTagFor, normalizeClassification, withColorTag, COLOR_TAGS } from '../src/compiler/compiled-schema.js';
 import {
     refsFor, compileContext, worldContext, parseCompileOutput, parseCharacters, parseThreads, parseWorld, changesSince, buildCompiledView, EMPTY_COMPILED,
+    editCompiledItem, removeCompiledItem, editCompiledSummary, compiledItemKey, dismissKey,
 } from '../src/compiler/compile-plan.js';
-import { normalizePolarity, polarityLabel, normalizeIntensity, normalizeTrend, normalizeThreadStatus, normalizeWorldKind } from '../src/compiler/compiled-schema.js';
+import {
+    normalizePolarity, polarityLabel, normalizeIntensity, normalizeTrend, normalizeThreadStatus, normalizeWorldKind, normalizeSecretStatus,
+} from '../src/compiler/compiled-schema.js';
 import { buildDossier, getEntityDossier, getRelationship } from '../src/compiler/dossier.js';
 import { similarity, meaningfulCount, shouldCompile } from '../src/compiler/schedule.js';
 import {
@@ -114,12 +117,12 @@ describe('planning and parsing', () => {
 
     it('parses character insights, one per character, keeping earlier sources', () => {
         const characters = parseCharacters([
-            { name: 'Lucian', traits: 'stubborn, kind', habits: ['runs at dawn.'], stressors: ['rent'], motivations: ['keep the gym open'], arc: 'From aimless to driven.', emotional_state: 'anxious', sources: ['m1'] },
+            { name: 'Lucian', summary: 'A trainer holding the gym together.', traits: 'stubborn, kind', habits: ['runs at dawn.'], stressors: ['rent'], motivations: ['keep the gym open'], arc: 'From aimless to driven.', emotional_state: 'anxious', sources: ['m1'] },
             { name: 'Lucian', traits: ['a repeat is ignored'] },
             { traits: ['no name'] },
         ], options);
         expect(characters).toEqual([{
-            entity: { id: 'chr_lucian', name: 'Lucian', type: 'character' }, traits: ['stubborn', 'kind'], habits: ['runs at dawn'], stressors: ['rent'],
+            entity: { id: 'chr_lucian', name: 'Lucian', type: 'character' }, summary: 'A trainer holding the gym together.', traits: ['stubborn', 'kind'], habits: ['runs at dawn'], stressors: ['rent'],
             motivations: ['keep the gym open'], arc: 'From aimless to driven.', emotional_state: 'anxious', sources: ['m_old', 'm_a'],
         }]);
     });
@@ -148,6 +151,50 @@ describe('planning and parsing', () => {
         expect(world[1]).toMatchObject({ entity: { id: 'loc_gym', type: 'location' }, involved: [{ id: 'chr_lucian' }] });
         expect(world[2].status).toBe('ongoing');
         expect(world[0].status).toBe('kept');
+    });
+
+    it('keeps what an answer leaves out of a list - a relationship, a character, a thread, a secret', () => {
+        const mira = { from: 'Mira', to: 'Lucian', type: 'student' };
+        const relationships = parseCompileOutput([{ id: 'f1', text: 'kept' }], [mira], options).relationships;
+        expect(relationships.map((r) => `${r.from.name}>${r.to.name}`)).toEqual(['Mira>Lucian', 'Lucian>Mira']);
+        expect(parseCharacters([{ name: 'Mira', traits: ['bold'] }], options).map((c) => c.entity.name)).toEqual(['Mira', 'Lucian']);
+        expect(parseThreads([{ title: 'New lead', text: 'x' }], options).map((t) => t.id)).toEqual(['t2', 't1']);
+        expect(parseWorld([{ kind: 'location', name: 'The gym', text: 'x' }], options).map((w) => [w.id, w.name])).toEqual([['w2', 'The gym'], ['w1', 'The debt']]);
+    });
+
+    it('continues a thread or world entry the answer gave a new id, by its words', () => {
+        const threads = parseThreads([{ id: 't7', title: 'the gym job', text: 'Lucian took the job.', status: 'resolved' }], options);
+        expect(threads.map((t) => [t.id, t.status])).toEqual([['t1', 'resolved']]);
+        const world = parseWorld([{ kind: 'secret', name: 'Debt, the', text: 'Lucian owes more.' }], options);
+        expect(world.map((w) => [w.id, w.text])).toEqual([['w1', 'Lucian owes more.']]);
+    });
+
+    it('reads "known only to" as a secret still kept', () => {
+        expect(['known only to Varyn', 'hidden', 'not yet revealed', 'known', 'revealed'].map(normalizeSecretStatus)).toEqual(['kept', 'kept', 'kept', 'revealed', 'revealed']);
+    });
+
+    it('lets the user edit and delete what the compiler wrote; a deleted item stays out', () => {
+        const edited = editCompiledItem(previous, 'thread', 't1', { title: 'The manager job', status: 'Done', ignored: 'x' });
+        expect(edited.threads[0]).toMatchObject({ title: 'The manager job', status: 'resolved', text: 'Lucian could manage the gym.' });
+        expect(edited.threads[0].edited_at).toBeTruthy();
+        expect(edited.threads[0].ignored).toBeUndefined();
+        const relKeyOf = compiledItemKey('relationship', previous.relationships[0]);
+        expect(editCompiledItem(previous, 'relationship', relKeyOf, { polarity: '-2', text: 'Cold now.' }).relationships[0]).toMatchObject({ polarity: -2, text: 'Cold now.' });
+        expect(editCompiledItem(previous, 'character', 'chr_lucian', { traits: 'calm, kind', summary: 'Settled.' }).characters[0]).toMatchObject({ traits: ['calm', 'kind'], summary: 'Settled.' });
+        expect(editCompiledItem(previous, 'world', 'w1', { known_by: 'Lucian, Gavin', status: 'known only to them' }).world[0]).toMatchObject({
+            known_by: [{ id: 'chr_lucian', name: 'Lucian' }, { id: null, name: 'Gavin' }], status: 'kept',
+        });
+        expect(editCompiledItem(previous, 'thread', 't9', { title: 'x' })).toBeNull();
+        expect(editCompiledSummary(previous, 'scene', ' At the gym. ').summary.scene).toBe('At the gym.');
+
+        const removed = removeCompiledItem(previous, 'thread', 't1');
+        expect(removed.threads).toEqual([]);
+        expect(removed.dismissed).toEqual([{ kind: 'thread', key: dismissKey('thread', previous.threads[0]), label: 'quest seed: The gym job' }]);
+        // The model brings it back (new id, other spelling): left out.
+        expect(parseThreads([{ id: 't5', title: 'The Gym Job', text: 'again' }, { title: 'Other', text: 'y' }], { ...options, previous: removed }).map((t) => t.title)).toEqual(['Other']);
+        expect(worldContext(removed, [], () => null)).toContain('Removed by the user - do not add these again:\n- quest seed: The gym job');
+        const noFact = removeCompiledItem(previous, 'fact', 'f1');
+        expect(parseCompileOutput([{ text: 'Lucian works at the gym.' }, { text: 'new' }], [], { ...options, previous: noFact }).facts.map((f) => f.text)).toEqual(['new']);
     });
 
     it('keeps a secret that no longer holds, with its status', () => {

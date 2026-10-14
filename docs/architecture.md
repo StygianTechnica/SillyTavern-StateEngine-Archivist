@@ -353,9 +353,25 @@ too, settle at once.
 The memory part of the compiler also answers two text variables,
 `compiled_story_summary` and `compiled_scene_summary`, stored as
 `compiled.summary` (`parseSummary()`: a new answer replaces, an empty one
-keeps). The view's Scene adds `scene_recent` - the scene-scope memories of
+keeps; `sceneAt` records the newest message the scene summary was written
+from). The view's Scene adds `scene_recent` - the scene-scope memories of
 the newest `SCENE_WINDOW` messages, from the memories themselves, since the
 model rarely classes a fact SCENE.
+
+The Current scene block is about NOW: who is present, the scene summary only
+while it was written from the newest `SCENE_WINDOW` messages, SCENE facts
+only from those messages (the compiler keeps old ones around), and the last
+few scene memories. A summary or fact from a scene long over is left out.
+
+**Left-out items are kept.** Each compile answer is the complete list, and a
+model drops items from a long list by accident - so `carriedForward()` keeps
+every relationship, character, thread and world entry the answer leaves out,
+and a thread or world entry answered under a new id with the same words as a
+current one continues it (`matchByWords()`). Only facts are dropped by the
+model. The user removes the rest: `removeCompiledItem()` records each deleted
+item in `compiled.dismissed` (by its words, not its id - a Rebuild gives new
+ids), the parsers leave out anything matching, and the context lists them
+under "Removed by the user". A Rebuild keeps `dismissed`.
 
 ## The UI
 
@@ -368,6 +384,10 @@ model rarely classes a fact SCENE.
   session, the relationship map and list, threads and quests, the world by
   kind, and the timeline (major events, witnesses, tone). Deleting there (`deleteMemoryRecords()`,
   `deleteChatMemories()`) is the only way a stored memory is ever removed.
+  Every compiled item has edit and delete buttons (`src/ui/compiled-edit.js`,
+  compiler.js `editCompiledMemoryItem()` / `deleteCompiledMemoryItem()` /
+  `editCompiledMemorySummary()`, refused while that chat is compiling - the
+  run would write over the change).
 
 What each shows is computed by plain functions (`drawer-model.js`,
 `memory-browser-model.js`); memory text always goes on the page as text,

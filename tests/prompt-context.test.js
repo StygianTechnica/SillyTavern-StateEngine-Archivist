@@ -28,8 +28,9 @@ describe('the scene from the memories', () => {
 
 describe('the compiled summaries', () => {
     it('take a new answer, and keep the previous one for an empty answer', () => {
-        expect(parseSummary(' Lucian left. ', '', { story: 'old', scene: 'At the gym.' })).toEqual({ story: 'Lucian left.', scene: 'At the gym.' });
-        expect(parseSummary(undefined, undefined, undefined)).toEqual({ story: '', scene: '' });
+        expect(parseSummary(' Lucian left. ', '', { story: 'old', scene: 'At the gym.', sceneAt: 4 }, 9)).toEqual({ story: 'Lucian left.', scene: 'At the gym.', sceneAt: 4 });
+        expect(parseSummary('', 'On the bus.', { story: 'old', scene: 'At the gym.', sceneAt: 4 }, 9)).toEqual({ story: 'old', scene: 'On the bus.', sceneAt: 9 });
+        expect(parseSummary(undefined, undefined, undefined)).toEqual({ story: '', scene: '', sceneAt: null });
     });
 });
 
@@ -39,10 +40,12 @@ describe('buildPromptContext', () => {
     const view = {
         story_summary: 'Syrvanus searched for Alvaryx.',
         scene_summary: 'Syrvanus talks with gremlins in the Chronicle Room.',
-        scene_state: [{ text: 'It is night.' }],
+        scene_summary_at: 40,
+        newest_message_index: 42,
+        scene_state: [{ text: 'It is night.', message_range: { from: 39, to: 41 } }, { text: 'The first rain.', message_range: { from: 2, to: 3 } }],
         scene_recent: [{ text: 'The gremlins revealed themselves.' }],
         character_profiles: [
-            { entity_id: 'chr_g', name: 'A lead gremlin', traits: ['cautious'], motivations: ['serve the Mnemos'], stressors: [], emotional_state: 'eager' },
+            { entity_id: 'chr_g', name: 'A lead gremlin', summary: 'An eager servant.', traits: ['cautious'], motivations: ['serve the Mnemos'], stressors: [], emotional_state: 'eager' },
             { entity_id: 'chr_z', name: 'Zeno', traits: ['cruel'], motivations: [], stressors: [], emotional_state: '' },
         ],
         relationships: [
@@ -67,9 +70,10 @@ describe('buildPromptContext', () => {
         expect(Object.keys(out)).toEqual(CONTEXT_BLOCKS.map(([name]) => name));
         expect(body(out.ctx_story_summary)).toBe('Story so far:\nSyrvanus searched for Alvaryx.');
         expect(body(out.ctx_scene)).toBe([
-            'Current scene:', 'Syrvanus talks with gremlins in the Chronicle Room.', '- It is night.', 'Just happened:', '- The gremlins revealed themselves.',
+            'Current scene:', 'Present: A lead gremlin, Syrvanus Voxaris.', 'Syrvanus talks with gremlins in the Chronicle Room.', '- It is night.',
+            'Just happened (oldest first):', '- The gremlins revealed themselves.',
         ].join('\n'));
-        expect(body(out.ctx_scene_characters)).toBe('Characters in this scene:\n- A lead gremlin: traits: cautious; wants: serve the Mnemos; feeling: eager');
+        expect(body(out.ctx_scene_characters)).toBe('Characters in this scene:\n- A lead gremlin: An eager servant.; traits: cautious; wants: serve the Mnemos; feeling: eager');
         // Zeno is not here: his relationship stays out; the gremlin's name matches loosely.
         expect(body(out.ctx_scene_relationships)).toBe('Relationships in this scene:\n- Syrvanus Voxaris -> gremlin (lead): ally, close (+2), medium intensity, warming. He accepts their help.');
         expect(body(out.ctx_threads)).toBe('Open story threads and quests:\n- [active] Find Alvaryx (quest): Alvaryx is missing. Progress: The gremlins offered to help.');
@@ -77,6 +81,12 @@ describe('buildPromptContext', () => {
         expect(body(out.ctx_secrets)).toContain('- The collar: It is venomous. Known only by: Zeno.');
         expect(out.ctx_secrets).not.toContain('gremlin plot');
         for (const text of Object.values(out)) expect(text.startsWith(`${REFERENCE_MARKER}\n`)).toBe(true);
+    });
+
+    it('leaves an old scene summary out of the current scene', () => {
+        const old = buildPromptContext({ ...view, scene_summary_at: 5 }, { present: [syr] });
+        expect(body(old.ctx_scene)).toBe(['Current scene:', 'Present: Syrvanus Voxaris.', '- It is night.', 'Just happened (oldest first):', '- The gremlins revealed themselves.'].join('\n'));
+        expect(buildPromptContext({ ...view, scene_summary: '', scene_state: [], scene_recent: [] }, { present: [syr] }).ctx_scene).toBe('');
     });
 
     it('is empty without a compiled view', () => {

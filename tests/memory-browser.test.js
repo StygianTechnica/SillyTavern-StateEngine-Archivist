@@ -227,6 +227,31 @@ describe('the memory browser window', () => {
         expect(texts()).toHaveLength(2);
     });
 
+    it('edits and deletes what the compiler wrote', async () => {
+        fake.respond = async () => ({
+            archivist__compiled_facts: [{ text: 'Mira keeps secrets.', classification: 'PERMANENT', entities: ['Mira'], sources: ['m1'] }],
+            archivist__compiled_relationships: [{ from: 'Mira', to: 'Kael', type: 'distrusts', text: 'Mira distrusts Kael.', sources: ['m1'] }],
+        });
+        const { compileOpenChat, getCompiledMemory } = await import('../src/compiler/compiler.js');
+        await compileOpenChat();
+        await openMemoryBrowser({ view: 'compiled' });
+        await waitFor(() => expect(q('[data-mb-edit="fact"]')).not.toBeNull());
+
+        q('[data-mb-edit="fact"]').click();
+        const field = q('.ar-mb-editing [data-mb-field="text"]');
+        expect(field.value).toBe('Mira keeps secrets.');
+        field.value = 'Mira keeps everyone\'s secrets.';
+        field.dispatchEvent(new Event('input', { bubbles: true }));
+        q('[data-mb-save]').click();
+        await waitFor(() => expect(q('.ar-mb-profile .ar-mb-record-text')?.textContent).toBe('Mira keeps everyone\'s secrets.'));
+        expect((await getCompiledMemory()).character_profiles[0].facts[0].edited_at).toBeTruthy();
+
+        answerPopup(true);
+        q('.ar-mb-profile [data-mb-remove="relationship"]').click();
+        await waitFor(async () => expect((await getCompiledMemory()).relationships).toEqual([]));
+        expect(q('[data-mb-remove="relationship"]')).toBeNull();
+    });
+
     it('offers to compile a chat that never was', async () => {
         await openMemoryBrowser({ view: 'compiled' });
         await waitFor(() => expect(q('.ar-mb-records .ar-mb-empty').textContent).toMatch(/^Not compiled yet/));

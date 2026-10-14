@@ -9,7 +9,9 @@
 // and its COMPILED memory (src/compiler/) - character profiles, scene state,
 // session details, relationships and the timeline, each fact with its colour
 // tag and a link to the chat messages it came from (for the open chat, a
-// click jumps there).
+// click jumps there). Everything the compiler wrote can be edited or
+// deleted there (src/ui/compiled-edit.js); a deleted item stays deleted
+// through later compiles.
 //
 // Opened from the drawer's "Review memories" button. What it shows comes
 // from src/ui/memory-browser-model.js; every memory's text is put on the
@@ -23,7 +25,11 @@ import { checkChatsExist } from '../memory/chat-existence.js';
 import { getObject, addObjectAlias } from '../api/objects.js';
 import { groupChats, filterChoices, filterRecords, shortDate, sourceLabel } from './memory-browser-model.js';
 import { confirmAction } from './confirm.js';
-import { getCompiledMemory, compileOpenChat, isCompiling, getCompilerStatus, onCompilerStatus, COMPILED_CHANGED_EVENT } from '../compiler/compiler.js';
+import {
+    getCompiledMemory, compileOpenChat, isCompiling, getCompilerStatus, onCompilerStatus, COMPILED_CHANGED_EVENT,
+    editCompiledMemoryItem, deleteCompiledMemoryItem, editCompiledMemorySummary,
+} from '../compiler/compiler.js';
+import { findViewItem, editValues, buildEditForm, itemButtons } from './compiled-edit.js';
 import { compilerLine } from './drawer-model.js';
 import { jumpToMessage } from './chat-jump.js';
 
@@ -39,6 +45,7 @@ const state = {
     checked: new Set(),   // ids of the memories ticked for "Delete selected"
     view: 'memories',     // 'memories' | 'compiled'
     compiled: null,       // the selected chat's compiled view (getCompiledMemory), or null
+    editing: null,        // { kind, key, values } - the compiled item being edited
 };
 let overlay = null;
 let loadToken = 0;
@@ -246,7 +253,20 @@ function tagChip(item) {
     return chip;
 }
 
+// The edit form in place of an item's row while it is being edited.
+function editable(kind, key, buildRow) {
+    const editing = state.editing;
+    if (!editing || editing.kind !== kind || editing.key !== key) return buildRow();
+    const row = el('div', 'ar-mb-fact ar-mb-editing');
+    row.append(buildEditForm(kind, editing.values));
+    return row;
+}
+
 function factRow(fact) {
+    return editable('fact', fact.id, () => factRowView(fact));
+}
+
+function factRowView(fact) {
     const row = el('div', 'ar-mb-fact');
     row.style.setProperty('--ar-chip', fact.color_hex);
     const meta = el('div', 'ar-mb-record-meta');
@@ -256,6 +276,8 @@ function factRow(fact) {
     if (about) meta.append(el('span', '', `about ${about}`));
     const link = messageLink(fact.message_range);
     if (link) meta.append(link);
+    if (fact.edited_at) meta.append(el('span', 'ar-mb-tag', 'edited'));
+    meta.append(itemButtons('fact', fact.id));
     row.append(meta, el('div', 'ar-mb-record-text', fact.text));
     if (fact.contradicts?.length) row.title = `Contradicts: ${fact.contradicts.join(', ')}`;
     return row;
@@ -279,6 +301,10 @@ function polarityBar(polarity, label) {
 }
 
 function relationshipRow(rel, { from = true } = {}) {
+    return editable('relationship', rel.item_key, () => relationshipRowView(rel, { from }));
+}
+
+function relationshipRowView(rel, { from }) {
     const row = el('div', 'ar-mb-fact');
     row.style.setProperty('--ar-chip', rel.color_hex);
     const meta = el('div', 'ar-mb-record-meta');
@@ -286,6 +312,8 @@ function relationshipRow(rel, { from = true } = {}) {
     meta.append(polarityBar(rel.polarity, rel.polarity_label), el('span', '', `${rel.polarity_label} · ${rel.intensity} intensity${rel.trend ? ` · ${rel.trend}` : ''}`));
     const link = messageLink(rel.message_range);
     if (link) meta.append(link);
+    if (rel.edited_at) meta.append(el('span', 'ar-mb-tag', 'edited'));
+    meta.append(itemButtons('relationship', rel.item_key));
     row.append(meta, el('div', 'ar-mb-record-text', rel.text));
     return row;
 }
@@ -327,6 +355,7 @@ function insightLines(profile) {
     for (const [field, label] of [['traits', 'Traits'], ['habits', 'Habits'], ['stressors', 'Stressors'], ['motivations', 'Motivations']]) {
         if (profile[field]?.length) lines.push([label, profile[field].join(', ')]);
     }
+    if (profile.summary) lines.unshift(['Now', profile.summary]);
     if (profile.arc) lines.push(['Arc', profile.arc]);
     if (profile.emotional_state) lines.push(['Feeling', profile.emotional_state]);
     return lines.map(([label, text]) => {
@@ -341,7 +370,18 @@ function profileBox(profile) {
     const head = el('div', 'ar-mb-profile-head');
     head.append(el('span', 'ar-mb-owner-name', profile.name));
     if (profile.entity_type) head.append(el('span', 'ar-mb-tag', profile.entity_type));
-    box.append(head, ...insightLines(profile), ...profile.facts.map(factRow));
+    let insights = el('div', 'ar-mb-insights');
+    if (profile.insights_key) {
+        const buttons = itemButtons('character', profile.insights_key);
+        buttons.title = 'Edit or delete these insights (each fact below has its own buttons)';
+        head.append(buttons);
+        insights = editable('character', profile.insights_key, () => {
+            const wrap = el('div', 'ar-mb-insights');
+            wrap.append(...insightLines(profile));
+            return wrap;
+        });
+    }
+    box.append(head, insights, ...profile.facts.map(factRow));
     const outgoing = profile.relationships.filter((r) => r.direction === 'out');
     if (outgoing.length) box.append(...outgoing.map((r) => relationshipRow(r, { from: false })));
     return box;
@@ -350,12 +390,18 @@ function profileBox(profile) {
 const STATUS_LABELS = { open: 'Open', active: 'Active', resolved: 'Resolved', abandoned: 'Abandoned' };
 
 function threadRow(thread) {
+    return editable('thread', thread.id, () => threadRowView(thread));
+}
+
+function threadRowView(thread) {
     const row = el('div', `ar-mb-fact ar-mb-thread ar-mb-thread-${thread.status}`);
     const meta = el('div', 'ar-mb-record-meta');
     meta.append(el('span', 'ar-mb-status', STATUS_LABELS[thread.status] ?? thread.status), el('span', '', thread.kind), el('span', 'ar-mb-strong', thread.title));
     if (thread.entity) meta.append(el('span', 'ar-mb-tag', `${thread.entity.type ?? 'object'}: ${thread.entity.name}`));
     const link = messageLink(thread.message_range);
     if (link) meta.append(link);
+    if (thread.edited_at) meta.append(el('span', 'ar-mb-tag', 'edited'));
+    meta.append(itemButtons('thread', thread.id));
     row.append(meta, el('div', 'ar-mb-record-text', thread.text));
     if (thread.progress) row.append(el('div', 'ar-mb-record-entities', `Progress: ${thread.progress}`));
     const involved = thread.involved.map((e) => e.name).filter(Boolean).join(', ');
@@ -373,6 +419,10 @@ const WORLD_SECTIONS = [
 ];
 
 function worldRow(entry) {
+    return editable('world', entry.id, () => worldRowView(entry));
+}
+
+function worldRowView(entry) {
     // A secret revealed or disproven, an event over: kept, but settled.
     const settled = ['revealed', 'disproven', 'over'].includes(entry.status);
     const row = el('div', `ar-mb-fact${settled ? ' ar-mb-settled' : ''}`);
@@ -382,6 +432,8 @@ function worldRow(entry) {
     if (entry.status) meta.append(el('span', '', entry.status));
     const link = messageLink(entry.message_range);
     if (link) meta.append(link);
+    if (entry.edited_at) meta.append(el('span', 'ar-mb-tag', 'edited'));
+    meta.append(itemButtons('world', entry.id));
     row.append(meta, el('div', 'ar-mb-record-text', entry.text));
     const knownBy = entry.known_by.map((e) => e.name).filter(Boolean).join(', ');
     if (entry.kind === 'secret') row.append(el('div', 'ar-mb-record-entities', `Known by: ${knownBy || 'nobody named yet'}`));
@@ -454,7 +506,7 @@ function renderCompiled() {
     list.replaceChildren(
         head,
         ...(suggestions.length ? [section('Suggested aliases', suggestions.map(aliasRow), '')] : []),
-        section('Story so far', view.story_summary ? [summaryRow(view.story_summary)] : [], 'No summary yet - the next compile writes one.'),
+        section('Story so far', view.story_summary ? [summaryRow(view.story_summary, 'story')] : [], 'No summary yet - the next compile writes one.'),
         section('Characters', view.character_profiles.map(profileBox), 'No lasting facts or insights yet.'),
         section('Scene', sceneRows(view), 'Nothing about the current scene yet.'),
         section('Session', view.session_details.map(factRow), 'Nothing about this part of the story.'),
@@ -466,17 +518,21 @@ function renderCompiled() {
     );
 }
 
-function summaryRow(text) {
-    const row = el('div', 'ar-mb-fact ar-mb-summary');
-    row.append(el('div', 'ar-mb-record-text', text));
-    return row;
+function summaryRow(text, which) {
+    return editable('summary', which, () => {
+        const row = el('div', 'ar-mb-fact ar-mb-summary');
+        const meta = el('div', 'ar-mb-record-meta');
+        meta.append(itemButtons('summary', which, { remove: false }));
+        row.append(meta, el('div', 'ar-mb-record-text', text));
+        return row;
+    });
 }
 
 // The scene: the compiler's summary of it, the facts it classed SCENE, and
 // - from the memories themselves - what just happened in it.
 function sceneRows(view) {
     const rows = [];
-    if (view.scene_summary) rows.push(summaryRow(view.scene_summary));
+    if (view.scene_summary) rows.push(summaryRow(view.scene_summary, 'scene'));
     rows.push(...view.scene_state.map(factRow));
     for (const memory of view.scene_recent ?? []) {
         const row = el('div', 'ar-mb-fact ar-mb-scene-recent');
@@ -572,6 +628,51 @@ async function deleteSelectedChat() {
     await loadChats();
 }
 
+// ---- editing the compiled memory
+
+const KIND_NAMES = { fact: 'fact', relationship: 'relationship', character: 'set of character insights', thread: 'story thread', world: 'world entry' };
+
+function startEdit(kind, key) {
+    const item = findViewItem(state.compiled, kind, key);
+    if (!item) return;
+    state.editing = { kind, key, values: editValues(kind, item) };
+    render();
+    overlay.querySelector('.ar-mb-editing [data-mb-field]')?.focus();
+}
+
+async function saveEdit() {
+    const editing = state.editing;
+    if (!editing) return;
+    try {
+        const changed = editing.kind === 'summary'
+            ? await editCompiledMemorySummary(state.selectedKey, editing.key, editing.values.text)
+            : await editCompiledMemoryItem(state.selectedKey, editing.kind, editing.key, editing.values);
+        if (!changed) toastr.warning('That item is gone - the compiled memory changed meanwhile.', 'Archivist');
+        state.editing = null;
+    } catch (err) {
+        console.warn(LOG_PREFIX, 'could not save the edit', err);
+        toastr.error(`The change could not be saved: ${err?.message ?? err}`, 'Archivist');
+        return;
+    }
+    await loadSelected();
+}
+
+async function removeItem(kind, key) {
+    const item = findViewItem(state.compiled, kind, key);
+    if (!item) return;
+    const what = item.title ?? item.name ?? item.text ?? (item.from ? `${item.from.name} -> ${item.to.name}` : '');
+    const question = `Delete this ${KIND_NAMES[kind] ?? 'item'}?\n\n"${what}"\n\nLater compiles leave it out; the memories it came from are kept.`;
+    if (!await confirmAction(question)) return;
+    try {
+        await deleteCompiledMemoryItem(state.selectedKey, kind, key);
+        if (state.editing?.kind === kind && state.editing?.key === key) state.editing = null;
+    } catch (err) {
+        console.warn(LOG_PREFIX, 'could not delete the compiled item', err);
+        toastr.error(`It could not be deleted: ${err?.message ?? err}`, 'Archivist');
+    }
+    await loadSelected();
+}
+
 // Compile now / Rebuild from the compiled view. Its progress and outcome
 // show in the view's status line (re-drawn on every compiler status).
 async function runCompile(rebuild) {
@@ -588,7 +689,27 @@ function onClick(e) {
     const viewButton = e.target.closest('[data-mb-view]');
     if (viewButton) {
         state.view = viewButton.dataset.mbView;
+        state.editing = null;
         render();
+        return;
+    }
+    const edit = e.target.closest('[data-mb-edit]');
+    if (edit) {
+        startEdit(edit.dataset.mbEdit, edit.dataset.mbKey);
+        return;
+    }
+    const remove = e.target.closest('[data-mb-remove]');
+    if (remove) {
+        void removeItem(remove.dataset.mbRemove, remove.dataset.mbKey);
+        return;
+    }
+    if (e.target.closest('[data-mb-save]')) {
+        void saveEdit();
+        return;
+    }
+    if (e.target.closest('[data-mb-cancel]')) {
+        state.editing = null;
+        void loadSelected();
         return;
     }
     const jump = e.target.closest('[data-mb-jump]');
@@ -614,6 +735,7 @@ function onClick(e) {
     const chat = e.target.closest('[data-chat-key]');
     if (chat) {
         state.selectedKey = chat.dataset.chatKey;
+        state.editing = null;
         state.filters = { ...EMPTY_FILTERS };
         state.checked.clear();
         render();
@@ -649,6 +771,11 @@ function onClick(e) {
 }
 
 function onInput(e) {
+    const field = e.target.dataset?.mbField;
+    if (field && state.editing) {
+        state.editing.values[field] = e.target.value;
+        return;
+    }
     const check = e.target.dataset?.mbCheck;
     if (check) {
         if (e.target.checked) state.checked.add(check);
@@ -714,11 +841,20 @@ function build() {
     if (listening) return;
     listening = true;
     document.addEventListener('keydown', (e) => {
-        if (state.open && e.key === 'Escape' && !document.querySelector('.popup:not([hidden])')) closeMemoryBrowser();
+        if (!state.open || e.key !== 'Escape' || document.querySelector('.popup:not([hidden])')) return;
+        // Escape leaves an edit first, then the window.
+        if (state.editing) {
+            state.editing = null;
+            void loadSelected();
+        } else {
+            closeMemoryBrowser();
+        }
     });
     // Stay current while open: new memories, deletions, renamed chats.
+    // An edit in progress is not redrawn under the user's cursor: the
+    // window catches up when it is saved or cancelled.
     const refresh = () => {
-        if (state.open) {
+        if (state.open && !state.editing) {
             render();
             void loadSelected();
         }
@@ -727,7 +863,7 @@ function build() {
     SillyTavern.getContext().eventSource.on(COMPILED_CHANGED_EVENT, refresh);
     // The compiled view shows what the compiler is doing as it does it.
     onCompilerStatus(() => {
-        if (state.open && state.view === 'compiled') render();
+        if (state.open && state.view === 'compiled' && !state.editing) render();
     });
 }
 
@@ -739,6 +875,7 @@ export async function openMemoryBrowser({ view = 'memories' } = {}) {
     state.open = true;
     state.view = view;
     state.selectedKey = null;
+    state.editing = null;
     state.filters = { ...EMPTY_FILTERS };
     state.checked.clear();
     overlay.hidden = false;

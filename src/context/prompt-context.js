@@ -11,13 +11,14 @@
 // sends nothing for it.
 
 import { nameKey } from '../compiler/entity-link.js';
+import { SCENE_WINDOW } from '../compiler/compile-plan.js';
 
 // The blocks, in the order a user would usually want them: [local variable
 // name, label, what it holds].
 export const CONTEXT_BLOCKS = Object.freeze([
     ['ctx_story_summary', 'Story so far', 'A summary of the story so far, from the compiled memory.'],
-    ['ctx_scene', 'Current scene', 'The current scene: its summary, what holds in it, and what just happened.'],
-    ['ctx_scene_characters', 'Characters in the scene', 'Traits, motivations, stressors and feelings of the characters present.'],
+    ['ctx_scene', 'Current scene', 'The current scene: who is here, its summary, what holds in it now, and what just happened.'],
+    ['ctx_scene_characters', 'Characters in the scene', 'Who the characters present are now, their traits, motivations, stressors and feelings.'],
     ['ctx_scene_relationships', 'Relationships in the scene', 'How the characters present (and your persona) relate to each other.'],
     ['ctx_threads', 'Open threads and quests', 'Plot hooks, unresolved threads and quests still open or active.'],
     ['ctx_recent_events', 'Recent events', 'The latest events of the story, in order.'],
@@ -59,6 +60,34 @@ function block(title, lines) {
     return lines.length ? [REFERENCE_MARKER, title, ...lines].join('\n') : '';
 }
 
+// How many of the current scene's memories "Just happened" lists. The scene
+// reaches SCENE_WINDOW messages back from the newest memory.
+export const JUST_HAPPENED = 6;
+
+// The current scene, NOW first: who is here, the compiler's summary of the
+// scene (only while it was written from the newest messages - an old one
+// describes a scene long over), what holds in it (SCENE facts from the
+// newest messages only: the compiler keeps old ones around), and the last
+// few things that happened in it.
+function sceneLines(view, present) {
+    const newest = view.newest_message_index ?? null;
+    const recentFrom = newest === null ? null : newest - SCENE_WINDOW;
+    const isRecent = (index) => recentFrom === null || (index !== null && index !== undefined && index > recentFrom);
+    const lines = [];
+    const here = present.map((p) => p?.name).filter(Boolean);
+    if (here.length) lines.push(`Present: ${here.join(', ')}.`);
+    // A summary from before its message was recorded (sceneAt null) is used.
+    if (view.scene_summary && (view.scene_summary_at === null || view.scene_summary_at === undefined || isRecent(view.scene_summary_at))) {
+        lines.push(view.scene_summary);
+    }
+    const holds = (view.scene_state ?? []).filter((f) => isRecent(f.message_range?.to)).slice(-MAX_ITEMS);
+    for (const fact of holds) lines.push(`- ${fact.text}`);
+    const recent = (view.scene_recent ?? []).slice(-JUST_HAPPENED);
+    if (recent.length) lines.push('Just happened (oldest first):', ...recent.map((m) => `- ${m.text}`));
+    // "Present: ..." alone says nothing about the scene.
+    return lines.length > (here.length ? 1 : 0) ? lines : [];
+}
+
 // { [local variable name]: text } for the open chat.
 //   view      getCompiledMemory() (null: never compiled)
 //   present   [{ id?, name, aliases? }] - the characters in the scene
@@ -71,17 +100,13 @@ export function buildPromptContext(view, { present = [], persona = null } = {}) 
 
     if (view.story_summary) out.ctx_story_summary = block('Story so far:', [view.story_summary]);
 
-    const sceneLines = [];
-    if (view.scene_summary) sceneLines.push(view.scene_summary);
-    for (const fact of (view.scene_state ?? []).slice(-MAX_ITEMS)) sceneLines.push(`- ${fact.text}`);
-    const recent = (view.scene_recent ?? []).slice(-MAX_ITEMS);
-    if (recent.length) sceneLines.push('Just happened:', ...recent.map((m) => `- ${m.text}`));
-    out.ctx_scene = block('Current scene:', sceneLines);
+    out.ctx_scene = block('Current scene:', sceneLines(view, present));
 
     const characterLines = (view.character_profiles ?? [])
         .filter((p) => isPresent({ id: p.entity_id, name: p.name }))
         .map((p) => {
             const parts = [];
+            if (p.summary) parts.push(p.summary);
             if (p.traits?.length) parts.push(`traits: ${p.traits.join(', ')}`);
             if (p.motivations?.length) parts.push(`wants: ${p.motivations.join(', ')}`);
             if (p.stressors?.length) parts.push(`under strain from: ${p.stressors.join(', ')}`);

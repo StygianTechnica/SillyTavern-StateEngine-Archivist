@@ -40,6 +40,7 @@ import { readJsonFile, writeJsonFile } from '../memory/storage.js';
 import { runIndependent } from '../extraction/independent-run.js';
 import {
     EMPTY_COMPILED, COMPILED_SCHEMA, refsFor, compileContext, worldContext, parseCompileOutput, parseCharacters, parseThreads, parseWorld, parseSummary, changesSince, buildCompiledView,
+    newestMessageIndex, editCompiledItem, removeCompiledItem, editCompiledSummary,
 } from './compile-plan.js';
 import { meaningfulCount, shouldCompile } from './schedule.js';
 
@@ -59,7 +60,9 @@ export const WORLD_VARIABLE = 'compiled_world';
 // world compiler.
 // 3: suspicions are mystery threads; settled threads and world entries are
 // kept with a status (a secret kept / revealed / disproven), never dropped.
-export const COMPILER_VARIABLE_VERSION = 3;
+// 4: a character's summary (who they are now); SCENE facts end with their
+// scene.
+export const COMPILER_VARIABLE_VERSION = 4;
 
 // New memories per compile run.
 export const COMPILE_BATCH = 60;
@@ -94,6 +97,7 @@ const FACTS_INSTRUCTIONS = [
     'Merge memories and facts that say the same thing about the same entity (the same core nouns, place, job or relationship) into ONE fact.',
     'Consolidate into canonical statements, for example: several memories about the same workplace become one fact "X works at Y"; mentions of money trouble or extra jobs become "X is under financial strain and considering additional work"; arrivals, weather and transport are facts about the scene.',
     'Drop a current fact only when the new memories show it is no longer true.',
+    'A SCENE fact holds only while its scene lasts: once the newest memories show the story has moved on (another place, a later time, the people gone), drop it - or, if it still matters, keep it as a SESSION or PERMANENT fact.',
     'Each item is an object: {"id": the id of the current fact it continues, or a new id f<number> for a new fact;',
     '"text": one self-contained statement naming who or what it is about;',
     '"entities": the names of the characters, places, factions and things it is about, exactly as the story names them;',
@@ -116,6 +120,7 @@ const RELATIONSHIPS_INSTRUCTIONS = [
 const CHARACTERS_INSTRUCTIONS = [
     'The COMPLETE updated list of character insights - one item per character the memories show enough of, inferred from what they do, say, choose and go through; keep the current ones, revised and added to by the new memories.',
     'Each item is an object: {"name": the character\'s name as the story names them;',
+    '"summary": who they are NOW, in 2 to 4 sentences - what is known about them as of the newest memories, judged by what they have done and how they have behaved: their situation, what they are caught up in, how they treat others and what others have learned about them. Rewrite it as the story moves on: a portrait of the present, not a history of events;',
     '"traits": personality traits their behaviour shows (a list of short phrases);',
     '"habits": habits and routines;',
     '"stressors": what puts them under strain or worries them;',
@@ -253,7 +258,12 @@ const normalizeCompiled = (data) => ({
     characters: list(data?.characters),
     threads: list(data?.threads),
     world: list(data?.world),
-    summary: { story: String(data?.summary?.story ?? ''), scene: String(data?.summary?.scene ?? '') },
+    summary: {
+        story: String(data?.summary?.story ?? ''),
+        scene: String(data?.summary?.scene ?? ''),
+        sceneAt: Number.isInteger(data?.summary?.sceneAt) ? data.summary.sceneAt : null,
+    },
+    dismissed: list(data?.dismissed),
     included: list(data?.included),
     compiledAt: data?.compiledAt ?? null,
     schema: data ? (data.schema ?? 1) : COMPILED_SCHEMA,
@@ -424,7 +434,8 @@ async function compileRun(ref, { rebuild }) {
     const settings = getSettings();
     const chatKey = chatKeyFor(ref);
     const records = await getAllMemories(chatKey);
-    let compiled = rebuild ? { ...EMPTY_COMPILED } : await compiledFor(chatKey);
+    // A rebuild starts over, but what the user deleted stays deleted.
+    let compiled = rebuild ? { ...EMPTY_COMPILED, dismissed: (await compiledFor(chatKey)).dismissed ?? [] } : await compiledFor(chatKey);
     const { added } = changesSince(compiled, records);
     if (!getChatEntry(chatKey) || (added.length === 0 && !rebuild)) return 'nothing';
     const withWorld = settings.compileWorld !== false;
@@ -473,9 +484,10 @@ async function compileRun(ref, { rebuild }) {
         compiled = {
             ...next,
             characters: parseCharacters(memory[CHARACTERS_VARIABLE], options),
-            summary: parseSummary(memory[STORY_SUMMARY_VARIABLE], memory[SCENE_SUMMARY_VARIABLE], compiled.summary),
+            summary: parseSummary(memory[STORY_SUMMARY_VARIABLE], memory[SCENE_SUMMARY_VARIABLE], compiled.summary, newestMessageIndex(batch)),
             threads: withWorld ? parseThreads(world[THREADS_VARIABLE], options) : compiled.threads,
             world: withWorld ? parseWorld(world[WORLD_VARIABLE], options) : compiled.world,
+            dismissed: compiled.dismissed ?? [],
             included: [...new Set([...compiled.included, ...batch.map((r) => r.id)])],
             compiledAt: new Date().toISOString(),
             // An older state stays flagged until rebuilt: its insights,
@@ -584,6 +596,48 @@ export async function getCompiledMemory(chatId) {
         console.warn(LOG_PREFIX, `could not read the compiled memory of "${chatId ?? chatKey}"`, err);
         return null;
     }
+}
+
+// ------------------------------------------------------------ the user's edits
+
+// Applies `change(compiled) -> next compiled | null` to a chat's compiled
+// memory (a SillyTavern chat id or registry chat key) and saves it. For the
+// memory browser's edit and delete buttons. Refused while that chat is
+// being compiled - the run would write over the change. Resolves to
+// true, or false when there was nothing to change; throws on refusal.
+async function changeCompiled(chatId, change) {
+    const chatKey = resolveChatKey(chatId);
+    if (!chatKey) throw new Error('the chat has no compiled memory');
+    if (isCompiling() && status?.chatKey === chatKey) throw new Error('the compiler is running for this chat - try again once it has finished');
+    const current = await compiledFor(chatKey);
+    if (!current.compiledAt) throw new Error('the chat has no compiled memory');
+    const next = change(current);
+    if (!next) return false;
+    // compiledAt stays: it is when the compiler last ran (the schedule's
+    // time rule reads it). The open chat's cache is replaced below.
+    const saved = { ...next, editedAt: new Date().toISOString() };
+    await writeCompiled(chatKey, saved);
+    if (chatKey === openKey()) openCache = { chatKey, compiled: saved };
+    emitCompiled(chatKey, getChatEntry(chatKey).chatId);
+    return true;
+}
+
+// The user's changes to one compiled item: `kind` 'fact' | 'relationship'
+// | 'character' | 'thread' | 'world', `key` its compiledItemKey() (an
+// item's id; a relationship's item_key; a profile's insights_key), `patch`
+// the fields to change (compile-plan.js editCompiledItem).
+export function editCompiledMemoryItem(chatId, kind, key, patch) {
+    return changeCompiled(chatId, (compiled) => editCompiledItem(compiled, kind, key, patch));
+}
+
+// Deletes one compiled item; later compiles leave it out too.
+export function deleteCompiledMemoryItem(chatId, kind, key) {
+    return changeCompiled(chatId, (compiled) => removeCompiledItem(compiled, kind, key));
+}
+
+// The user's text for the story ('story') or scene ('scene') summary.
+export function editCompiledMemorySummary(chatId, which, text) {
+    return changeCompiled(chatId, (compiled) => editCompiledSummary(compiled, which, text));
 }
 
 // ------------------------------------------------------------ scheduling
