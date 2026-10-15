@@ -34,7 +34,7 @@ import { getChatPhraseTics, removePhraseTic, PHRASE_TICS_CHANGED_EVENT } from '.
 import { WARN_AT } from '../compiler/phrase-tics.js';
 import { currentStep, TENSION_AXES, TENSION_MAX } from '../compiler/compiled-schema.js';
 import { compilerLine, rebuildLine } from './drawer-model.js';
-import { startCatchUp, cancelCatchUp, getCatchUpProgress, onCatchUpProgress, isCatchUpRunning, hasUnfinishedRebuild } from '../extraction/catch-up.js';
+import { startCatchUp, cancelCatchUp, getCatchUpProgress, onCatchUpProgress, isCatchUpRunning, rebuildMessagesLeft } from '../extraction/catch-up.js';
 import { jumpToMessage } from './chat-jump.js';
 
 const EMPTY_FILTERS = Object.freeze({ search: '', subtype: '', scope: '', importance: '', entity: '', tag: '' });
@@ -253,7 +253,8 @@ function renderRebuild() {
         button.disabled = !!progress.cancelling;
         button.title = 'Stop after the chunk in progress - the rest keep their old memories';
     } else {
-        label.textContent = isOpen && hasUnfinishedRebuild(state.selectedKey) ? 'Continue rebuilding memories' : 'Rebuild memories from chat';
+        const left = isOpen ? rebuildMessagesLeft(state.selectedKey) : 0;
+        label.textContent = left ? `Continue rebuilding memories (${left} ${left === 1 ? 'message' : 'messages'} left)` : 'Rebuild memories from chat';
         button.disabled = !isOpen || isCatchUpRunning();
         button.title = !isOpen ? 'Open this chat to rebuild its memories from its messages'
             : isCatchUpRunning() ? 'Catch-up is running - wait for it to finish'
@@ -275,8 +276,9 @@ async function rebuildMemories() {
     const entry = getChatEntry(state.selectedKey);
     if (!entry || state.selectedKey !== openChatKey()) return;
     const messages = (SillyTavern.getContext().chat ?? []).filter((m) => !m?.is_system && String(m?.mes ?? '').trim()).length;
-    const question = hasUnfinishedRebuild(state.selectedKey)
-        ? `Continue rebuilding the memories of "${entry.chatId}" from where it stopped?`
+    const left = rebuildMessagesLeft(state.selectedKey);
+    const question = left
+        ? `Continue rebuilding the memories of "${entry.chatId}"? Only the ${left} ${left === 1 ? 'message' : 'messages'} not rebuilt yet are read - the chunks that failed or were stopped.`
         : [
             `Rebuild the memories of "${entry.chatId}" from its ${messages} messages?`,
             'Every message is read again with the current extraction, in chunks, through the catch-up preset - this takes a while, and you can keep chatting meanwhile.',

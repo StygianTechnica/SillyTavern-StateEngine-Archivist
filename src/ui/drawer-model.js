@@ -69,12 +69,12 @@ export function rebuildLine(progress, openChatKey) {
         case 'nothing':
             return { text: `Nothing to rebuild${where} - the chat has no messages to read.`, error: false };
         case 'cancelled':
-            return { text: `Memory rebuild stopped${where} after ${progress.done} of ${progress.total} chunks - the rest keep their old memories. Continue it any time.`, error: false };
+            return { text: `Memory rebuild stopped${where} after ${progress.done} of ${progress.total} chunks - the rest keep their old memories. Continue reads only those.`, error: false };
         case 'failed':
             return { text: `The memory rebuild failed${where}: ${progress.lastError || 'see the browser console'}. The old memories are kept.`, error: true };
         default: {
             const failed = progress.failedChunks
-                ? ` ${progress.failedChunks} of ${progress.total} chunks failed (${progress.lastError}) and kept their old memories - continue to retry them.`
+                ? ` ${progress.failedChunks} of ${progress.total} chunks failed (${progress.lastError}) and kept their old memories - Continue retries only those, then recompiles.`
                 : '';
             const compile = progress.compileStarted ? ' Recompiling them now.' : '';
             return { text: `Memories rebuilt${where}: ${many(progress.stored)} from ${progress.messages} messages.${failed}${compile}`, error: progress.failedChunks > 0 };

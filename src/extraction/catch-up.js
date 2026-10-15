@@ -26,10 +26,11 @@
 // the ones its messages had (replaceMessageMemories() - the messages as
 // shown now; another swipe's memories stay) - so changes to extraction reach
 // the whole chat. A chunk replaces only once it succeeded: a failed or
-// cancelled one leaves its old memories. How far it got is kept
-// (memoryRebuild in the registry entry), so a stopped rebuild continues
-// there; a finished one starts the compiler's Rebuild, the compiled memory
-// resting on the memories just replaced. A chunk whose run fails is reported and skipped; a run
+// cancelled one leaves its old memories. Which messages it has rebuilt is
+// kept (memoryRebuild: { done: [message stamp] } in the registry entry), so
+// Continue reads only the rest - the chunks that failed, or that a stop cut
+// off. Once every message is rebuilt, the compiler's Rebuild runs, the
+// compiled memory resting on the memories just replaced. A chunk whose run fails is reported and skipped; a run
 // State Engine turns away because another independent preset is running is
 // retried after a short wait.
 
@@ -208,10 +209,11 @@ async function runPass(ref, chat, { rebuild = false } = {}) {
     await preparePreset();
 
     let records = await getAllMemories(chatKey);
-    // A rebuild sends every message (none counts as covered) from where a
-    // stopped one got to.
+    // A rebuild sends every message (none counts as covered) it hasn't
+    // rebuilt yet.
+    const rebuilt = rebuild ? rebuiltStamps(chatKey, chat) : null;
     const indexes = rebuild
-        ? uncoveredIndexes(chat, [], ref.chatId, getChatEntry(chatKey)?.memoryRebuild ?? null)
+        ? uncoveredIndexes(chat, [], ref.chatId, null).filter((i) => !rebuilt.has(messageStamp(chat, i)))
         : uncoveredIndexes(chat, records, ref.chatId, getChatEntry(chatKey)?.catchUp ?? null);
     const chunks = toChunks(indexes, settings.chunkSize);
     update({ total: chunks.length, messages: indexes.length });
@@ -232,21 +234,48 @@ async function runPass(ref, chat, { rebuild = false } = {}) {
         } else {
             const gone = new Set(removed);
             records = records.filter((r) => !gone.has(r.id)).concat(added);
-            if (contiguous) {
+            ensureChatEntry(ref);
+            if (rebuild) {
+                for (const i of chunk) rebuilt.add(messageStamp(chat, i));
+                updateChatEntry(chatKey, { memoryRebuild: { done: [...rebuilt] } });
+            } else if (contiguous) {
                 const last = chunk[chunk.length - 1];
-                const point = { index: last, sendDate: String(chat[last].send_date ?? '') };
-                ensureChatEntry(ref);
-                updateChatEntry(chatKey, rebuild ? { memoryRebuild: point } : { catchUp: point });
+                updateChatEntry(chatKey, { catchUp: { index: last, sendDate: String(chat[last].send_date ?? '') } });
             }
             update({ stored: progress.stored + added.length });
         }
         update({ done: k + 1 });
     }
     if (progress.failedChunks === chunks.length) return 'failed';
-    // Every chunk done: the rebuild is over (a failed chunk keeps the point
-    // where to continue).
-    if (rebuild && contiguous) updateChatEntry(chatKey, { memoryRebuild: null });
+    // Every message rebuilt: the rebuild is over. A failed chunk leaves its
+    // messages for Continue.
+    if (rebuild && progress.failedChunks === 0) updateChatEntry(chatKey, { memoryRebuild: null });
     return 'completed';
+}
+
+// A message as a rebuild remembers it: its index and send date - an edited
+// or re-swiped message is not the one rebuilt.
+const messageStamp = (chat, i) => `${i}@${String(chat[i]?.send_date ?? '')}`;
+
+// The messages of `chat` the chat's unfinished rebuild has done. An older
+// resume point ({ index, sendDate }) counts as everything up to it.
+function rebuiltStamps(chatKey, chat) {
+    const saved = getChatEntry(chatKey)?.memoryRebuild;
+    if (Array.isArray(saved?.done)) return new Set(saved.done);
+    const done = new Set();
+    if (Number.isInteger(saved?.index) && String(chat[saved.index]?.send_date ?? '') === String(saved.sendDate ?? '')) {
+        for (let i = 0; i <= saved.index; i++) done.add(messageStamp(chat, i));
+    }
+    return done;
+}
+
+// How many of the open chat's messages its unfinished rebuild has left to
+// read (0 when there is none unfinished).
+export function rebuildMessagesLeft(chatKey) {
+    if (!getChatEntry(chatKey)?.memoryRebuild) return 0;
+    const chat = snapshotChat();
+    const done = rebuiltStamps(chatKey, chat);
+    return uncoveredIndexes(chat, [], '', null).filter((i) => !done.has(messageStamp(chat, i))).length;
 }
 
 // After a memory rebuild: the compiler's Rebuild, so the compiled memory
@@ -268,8 +297,9 @@ export function isRebuildingMemories() {
     return progress?.running === true && progress.rebuild === true;
 }
 
-// Whether the chat `chatKey` has a memory rebuild that was stopped before
-// its end - the next one continues from there.
+// Whether the chat `chatKey` has a memory rebuild that stopped before every
+// message was rebuilt (stopped, or chunks failed) - the next one reads only
+// what is left.
 export function hasUnfinishedRebuild(chatKey) {
     return !!getChatEntry(chatKey)?.memoryRebuild;
 }
@@ -316,7 +346,9 @@ export async function startCatchUp({ whenDone, rebuild = false } = {}) {
         .then((outcome) => {
             update({ running: false, cancelling: false, outcome, finishedAt: new Date().toISOString() });
             console.info(LOG_PREFIX, `${rebuild ? 'memory rebuild' : 'catch-up'} of "${ref.chatId}" ${outcome}: ${progress.stored} memories stored from ${progress.messages} messages`);
-            return rebuild && outcome === 'completed' ? compileAfterRebuild(ref) : null;
+            // Recompiled once every message is rebuilt - not while failed
+            // chunks wait for Continue.
+            return rebuild && outcome === 'completed' && !hasUnfinishedRebuild(chatKeyFor(ref)) ? compileAfterRebuild(ref) : null;
         });
     whenDone?.(pass);
     return true;

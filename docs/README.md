@@ -118,9 +118,11 @@ the current extraction, through the catch-up preset and its settings:
   the chunk succeeded. A chunk that fails, or that you stop before, keeps its
   old memories. Memories of swipes you're not showing are left alone.
 - It takes a while on a long chat; keep chatting meanwhile. **Stop
-  rebuilding** stops after the chunk in progress, and the button then offers
-  **Continue rebuilding memories** from where it stopped.
-- When it's done, the compiler's **Rebuild** runs on the new memories
+  rebuilding** stops after the chunk in progress. Archivist remembers which
+  messages are rebuilt, so the button then offers **Continue rebuilding
+  memories (N messages left)**, which reads only the rest - the chunks that
+  failed, or that a stop cut off - never the ones already done.
+- Once every message is rebuilt, the compiler's **Rebuild** runs on the new memories
   (story threads you wrote yourself are kept). Automatic compiles wait until
   then.
 - Memories you deleted may come back - they are found again in the messages.

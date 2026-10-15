@@ -10,7 +10,7 @@ import { getSettings } from '../src/settings.js';
 import { sourceMessageId } from '../src/extraction/messages.js';
 import { uncoveredIndexes, toChunks, carryOver, chunkContext, sourceIndexFor, MAX_MESSAGE_CHARS } from '../src/extraction/catch-up-plan.js';
 import {
-    startCatchUp, cancelCatchUp, getCatchUpProgress, onCatchUpProgress, isCatchUpRunning,
+    startCatchUp, cancelCatchUp, getCatchUpProgress, onCatchUpProgress, isCatchUpRunning, rebuildMessagesLeft,
     CATCH_UP_PRESET, CATCH_UP_HEADER,
 } from '../src/extraction/catch-up.js';
 
@@ -272,25 +272,30 @@ describe('rebuilding the memories from the chat', () => {
         expect(getCatchUpProgress().compileStarted).toBe(true);
     });
 
-    it('keeps a failed chunk\'s old memories, and continues from where it stopped', async () => {
+    it('keeps a failed chunk\'s old memories, and Continue reads only that chunk', async () => {
         const respond = fake.respond;
         let calls = 0;
         fake.respond = async (context) => {
             if (context.includes('Chat messages:') && ++calls === 2) throw new Error('model timed out');
             return respond(context);
         };
+        const { getCompilerStatus } = await import('../src/compiler/compiler.js');
         const first = await rebuild();
-        expect(first).toMatchObject({ outcome: 'completed', failedChunks: 1 });
+        // No recompile while chunks wait to be retried.
+        expect(first).toMatchObject({ outcome: 'completed', failedChunks: 1, compileStarted: false });
         expect(await texts()).toEqual(['old 3', 'other swipe of 5', 'new 0+1', 'new 4+5']);
-        // The point to continue from: after the last chunk before the failed one.
-        expect(getChatEntry('char:alice.png:Chat A').memoryRebuild).toEqual({ index: 1, sendDate: 'd1' });
+        // Which messages are rebuilt: all but the failed chunk's.
+        expect(getChatEntry('char:alice.png:Chat A').memoryRebuild).toEqual({ done: ['0@d0', '1@d1', '4@d4', '5@d5'] });
+        expect(rebuildMessagesLeft('char:alice.png:Chat A')).toBe(2);
 
         fake.respond = respond;
-        await rebuild();
-        expect(contexts().slice(3)).toHaveLength(2);
-        expect(contexts()[3]).toContain('[#2] User: message 2');
-        expect(await texts()).toEqual(['other swipe of 5', 'new 0+1', 'new 2+3', 'new 4+5']);
+        const second = await rebuild();
+        expect(contexts().slice(3)).toEqual([expect.stringMatching(/\[#2\] User: message 2\n\[#3\] Mira: message 3$/)]);
+        expect(second).toMatchObject({ outcome: 'completed', total: 1, failedChunks: 0 });
+        expect(await texts()).toEqual(['other swipe of 5', 'new 0+1', 'new 4+5', 'new 2+3']);
         expect(getChatEntry('char:alice.png:Chat A').memoryRebuild).toBeNull();
+        expect(rebuildMessagesLeft('char:alice.png:Chat A')).toBe(0);
+        await vi.waitFor(() => expect(getCompilerStatus()).toMatchObject({ reason: 'memory rebuild', running: false }));
     });
 
     it('stops between chunks when asked, keeping the rest', async () => {
@@ -302,6 +307,7 @@ describe('rebuilding the memories from the chat', () => {
         const progress = await rebuild();
         expect(progress).toMatchObject({ outcome: 'cancelled', done: 1 });
         expect(await texts()).toEqual(['old 3', 'other swipe of 5', 'new 0+1']);
-        expect(getChatEntry('char:alice.png:Chat A').memoryRebuild).toEqual({ index: 1, sendDate: 'd1' });
+        expect(getChatEntry('char:alice.png:Chat A').memoryRebuild).toEqual({ done: ['0@d0', '1@d1'] });
+        expect(rebuildMessagesLeft('char:alice.png:Chat A')).toBe(4);
     });
 });
