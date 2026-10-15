@@ -91,7 +91,7 @@ export function rebuildLine(progress, openChatKey) {
             const failed = progress.failedChunks
                 ? ` ${progress.failedChunks} of ${progress.total} chunks failed (messages ${failedRanges(progress)}: ${progress.lastError}) and kept their old memories - Continue retries only those, then recompiles.`
                 : '';
-            const compile = progress.compileStarted ? ' Recompiling them now.' : '';
+            const compile = progress.compileStarted ? ' The compiled memory is being rebuilt from them - see the Compiled view.' : '';
             return { text: `Memories rebuilt${where}: ${many(progress.stored)} from ${progress.messages} messages.${failed}${compile}`, error: progress.failedChunks > 0 };
         }
     }

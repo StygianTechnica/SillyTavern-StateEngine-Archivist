@@ -227,6 +227,11 @@
     display: none;
 }
 
+/* SillyTavern's .menu_button sets display, which beats [hidden]. */
+.ar-mb-actions [hidden] {
+    display: none !important;
+}
+
 .ar-mb-toolbar select {
     width: auto;
 }

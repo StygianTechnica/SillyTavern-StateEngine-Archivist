@@ -288,8 +288,16 @@ async function compileAfterRebuild(ref) {
     try {
         const open = getCurrentChatRef();
         if (!open || chatKeyFor(open) !== chatKeyFor(ref)) return;
-        const { compileOpenChat } = await import('../compiler/compiler.js');
-        if (await compileOpenChat({ rebuild: true, reason: 'memory rebuild' })) update({ compileStarted: true });
+        const { compileOpenChat, isCompiling } = await import('../compiler/compiler.js');
+        if (isCompiling()) {
+            console.warn(LOG_PREFIX, 'the compiler was already running when the memories were rebuilt - Rebuild the compiled memory once it is done');
+            return;
+        }
+        // Said when it starts - compileOpenChat() resolves only once the
+        // whole compile is over, which on a long chat takes a while.
+        const running = compileOpenChat({ rebuild: true, reason: 'memory rebuild' });
+        if (isCompiling()) update({ compileStarted: true });
+        await running;
     } catch (err) {
         console.warn(LOG_PREFIX, 'could not start the compiler after rebuilding the memories', err);
     }
