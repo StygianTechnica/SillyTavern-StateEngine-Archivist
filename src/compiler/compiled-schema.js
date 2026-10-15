@@ -59,10 +59,20 @@ const POLARITY_WORDS = Object.freeze({
     positive: 1, negative: -1, warm: 1, cold: -1, loving: 3, hateful: -3, enemy: -3, ally: 2, trusting: 2, distrustful: -1, mixed: 0,
 });
 
-// 2, "+2", "2.4", "close" -> 2; unknown -> 0. Clamped to -3..3.
+// The first of `words` that `token` has as a whole word, or undefined.
+const wordIn = (token, words) => words.find((word) => new RegExp(`(^|[^a-z])${word}([^a-z]|$)`).test(token));
+
+// 2, "+2", "2.4", "close", "close (+2)", "wary (-1)" -> the number, else
+// the word; unknown -> 0. Clamped to -3..3. Small models write the label
+// and the number together, copied from the context's relationship lines.
 export function normalizePolarity(value) {
-    let n = typeof value === 'number' ? value : Number.parseFloat(String(value ?? '').trim());
-    if (Number.isNaN(n)) n = POLARITY_WORDS[String(value ?? '').trim().toLowerCase()] ?? 0;
+    let n = typeof value === 'number' ? value : NaN;
+    if (Number.isNaN(n)) {
+        // A typographic minus or dash ("−1") is a minus.
+        const token = String(value ?? '').trim().toLowerCase().replace(/[−–—]/g, '-');
+        const number = token.match(/[-+]?\d+(\.\d+)?/);
+        n = number ? Number.parseFloat(number[0]) : (POLARITY_WORDS[wordIn(token, Object.keys(POLARITY_WORDS))] ?? 0);
+    }
     return Math.max(-3, Math.min(3, Math.round(n)));
 }
 
@@ -77,6 +87,8 @@ export const INTENSITIES = Object.freeze(['low', 'medium', 'high']);
 export function normalizeIntensity(value) {
     const token = String(value ?? '').trim().toLowerCase();
     if (INTENSITIES.includes(token)) return token;
+    const word = wordIn(token, INTENSITIES);
+    if (word) return word;
     if (/^(strong|intense|very|deep)/.test(token)) return 'high';
     if (/^(weak|slight|mild|faint|minor)/.test(token)) return 'low';
     return 'medium';
@@ -88,6 +100,8 @@ export const TRENDS = Object.freeze(['warming', 'cooling', 'stable', 'volatile']
 export function normalizeTrend(value) {
     const token = String(value ?? '').trim().toLowerCase();
     if (TRENDS.includes(token)) return token;
+    const word = wordIn(token, TRENDS);
+    if (word) return word;
     if (/^(improv|grow|better|closer)/.test(token)) return 'warming';
     if (/^(worse|declin|strain|distant)/.test(token)) return 'cooling';
     if (/^(unstable|chang|turbul|mixed)/.test(token)) return 'volatile';

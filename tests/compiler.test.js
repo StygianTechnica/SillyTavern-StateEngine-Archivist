@@ -11,7 +11,7 @@ import { getSettings } from '../src/settings.js';
 import { colorTagFor, normalizeClassification, withColorTag, COLOR_TAGS } from '../src/compiler/compiled-schema.js';
 import {
     refsFor, compileContext, worldContext, parseCompileOutput, parseCharacters, parseThreads, parseWorld, changesSince, buildCompiledView, EMPTY_COMPILED,
-    editCompiledItem, removeCompiledItem, editCompiledSummary, compiledItemKey, dismissKey, parseTension,
+    editCompiledItem, removeCompiledItem, editCompiledSummary, compiledItemKey, dismissKey, parseTension, relationshipType,
 } from '../src/compiler/compile-plan.js';
 import {
     normalizePolarity, polarityLabel, normalizeIntensity, normalizeTrend, normalizeThreadStatus, normalizeWorldKind, normalizeSecretStatus,
@@ -50,6 +50,10 @@ describe('colour tags', () => {
         expect([polarityLabel(-3), polarityLabel(0), polarityLabel(3)]).toEqual(['hostile', 'neutral', 'devoted']);
         expect([normalizeIntensity('HIGH'), normalizeIntensity('strong'), normalizeIntensity('slight'), normalizeIntensity('')]).toEqual(['high', 'high', 'low', 'medium']);
         expect([normalizeTrend('improving'), normalizeTrend('stable'), normalizeTrend('x')]).toEqual(['warming', 'stable', '']);
+        // A label and number together, as copied from the context's relationship lines.
+        expect(['close (+2)', 'wary (-1)', '−2 antagonistic', 'friendly', 'Devoted.', '2 (close)'].map(normalizePolarity)).toEqual([2, -1, -2, 1, 3, 2]);
+        expect([normalizeIntensity('high intensity'), normalizeIntensity('Low-key')]).toEqual(['high', 'low']);
+        expect([normalizeTrend('cooling: drifting apart'), normalizeTrend('Warming.')]).toEqual(['cooling', 'warming']);
         expect([normalizeThreadStatus('in progress'), normalizeThreadStatus('Completed'), normalizeThreadStatus('')]).toEqual(['active', 'resolved', 'open']);
         expect([normalizeWorldKind('Place'), normalizeWorldKind('organization'), normalizeWorldKind('world_event'), normalizeWorldKind('custom')]).toEqual(['location', 'faction', 'event', 'lore']);
     });
@@ -207,6 +211,14 @@ describe('planning and parsing', () => {
         expect(parseCompileOutput([{ id: 'f9', text: 'New.' }], [], options).facts.map((f) => f.id)).toEqual(['f9']);
     });
 
+    it('takes a relationship type without the context line the model copied into it', () => {
+        expect(relationshipType('mentor · wary (-1) · high intensity · cooling: Disputes her visions')).toBe('mentor');
+        expect(relationshipType(' Traveling Companion · friendly (2)')).toBe('traveling companion');
+        expect(relationshipType('rival: old grudge')).toBe('rival');
+        expect(relationshipType('friend')).toBe('friend');
+        expect(relationshipType('· odd')).toBe('· odd');
+    });
+
     it('reads tension levels 0..5 and averages them', () => {
         expect([3, '4', '4/5', 4.6, 9, -2, 'high', null].map(normalizeTensionLevel)).toEqual([3, 4, 4, 5, 5, 0, null, null]);
         expect(tensionOverall({ threat: 4, uncertainty: 2, emotional: 3 })).toBe(3);
@@ -275,6 +287,19 @@ describe('planning and parsing', () => {
         expect(threads.map((t) => [t.id, t.status])).toEqual([['t1', 'resolved']]);
         const world = parseWorld([{ kind: 'secret', name: 'Debt, the', text: 'Lucian owes more.' }], options);
         expect(world.map((w) => [w.id, w.text])).toEqual([['w1', 'Lucian owes more.']]);
+    });
+
+    it('takes an item that reuses an id for something else as new, keeping the current one', () => {
+        const threads = parseThreads([
+            { id: 't1', kind: 'quest', title: 'Navigating Elyon\'s Return', text: 'x' },
+            { id: 't2', title: 'Another', text: 'y' },
+        ], options);
+        expect(threads.map((t) => [t.id, t.title])).toEqual([['t2', 'Navigating Elyon\'s Return'], ['t3', 'Another'], ['t1', 'The gym job']]);
+        // Same subject, other words: continued.
+        expect(parseThreads([{ id: 't1', title: 'Running the gym', text: 'z', status: 'active' }], options).map((t) => [t.id, t.title, t.status]))
+            .toEqual([['t1', 'Running the gym', 'active']]);
+        const world = parseWorld([{ id: 'w1', kind: 'location', name: 'The Liston Library', text: 'Decrepit.' }], options);
+        expect(world.map((w) => [w.id, w.name])).toEqual([['w2', 'The Liston Library'], ['w1', 'The debt']]);
     });
 
     it('reads "known only to" as a secret still kept', () => {
@@ -664,10 +689,27 @@ describe('compiling through the independent preset', () => {
         expect(getCompilerStatus()).toMatchObject({ outcome: 'failed', error: expect.stringContaining('dropped every fact') });
 
         fake.respond = async () => { throw new Error('model down'); };
+        const before = memoryRuns().length;
         await compileOpenChat();
         expect(getCompilerStatus()).toMatchObject({ outcome: 'failed', error: 'model down' });
+        // Tried twice before giving up.
+        expect(memoryRuns().length - before).toBe(2);
         expect((await getCompiledMemory()).session_details.map((f) => f.text)).toEqual(['compiled m1']);
         expect((await getCompiledMemory()).pending).toBe(1);
+    });
+
+    it('runs a part again when its answer could not be read, and goes on', async () => {
+        await store([{ text: 'one', source_message_id: 'Chat A#1@d1' }]);
+        let calls = 0;
+        fake.respond = async (context) => {
+            calls++;
+            if (calls === 1) throw new Error('the answer was not valid JSON');
+            return factsAnswer(context);
+        };
+        await compileOpenChat();
+        expect(getCompilerStatus()).toMatchObject({ outcome: 'compiled', error: null });
+        expect(memoryRuns()).toHaveLength(2);
+        expect((await getCompiledMemory()).session_details.map((f) => f.text)).toEqual(['compiled m1']);
     });
 
     it('returns null for a chat never compiled, and loses the file with the chat\'s memories', async () => {

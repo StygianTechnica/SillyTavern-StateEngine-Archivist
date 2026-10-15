@@ -73,10 +73,13 @@ export const WORLD_VARIABLE = 'compiled_world';
 // 7: phrase tics: a wider net.
 // 8: phrase tics: stock description only.
 // 9: plan steps on threads; story tension.
-export const COMPILER_VARIABLE_VERSION = 9;
+// 10: relationship polarity judged afresh, agreeing with type and text.
+export const COMPILER_VARIABLE_VERSION = 10;
 
-// New memories per compile run.
-export const COMPILE_BATCH = 60;
+// New memories per compile run. Small, so a Rebuild revises relationships
+// and threads often - a small model mostly keeps what a batch hands it, and
+// overlooks what a long batch buries (a plan made in passing).
+export const COMPILE_BATCH = 20;
 
 // Emitted on SillyTavern's event bus after a chat's compiled memory changes,
 // with { chatId, chatKey }.
@@ -122,7 +125,8 @@ const RELATIONSHIPS_INSTRUCTIONS = [
     'The COMPLETE updated list of relationships, one item for each direction of a pair (how A sees B, and how B sees A, can differ) - keep the current ones that still hold, revise them as the new memories change them, add new ones.',
     'Each item is an object: {"from": a name; "to": a name - each the name only, exactly as the story names them and as the current relationships write it, never with a description in brackets ("Remus Watt", not "Remus Watt (romantic partner)");',
     '"type": what the relationship is, in your own words - friend, enemy, mentor, student, colleague, boss, client, rival, crush, partner, family, acquaintance, stranger, or whatever fits best;',
-    '"polarity": how "from" feels toward "to", a whole number from -3 to 3: -3 hostile, -2 antagonistic, -1 wary, 0 neutral, 1 friendly, 2 close, 3 devoted;',
+    '"polarity": how "from" feels toward "to", a whole number from -3 to 3: -3 hostile, -2 antagonistic, -1 wary, 0 neutral, 1 friendly, 2 close, 3 devoted -',
+    'judge it afresh every time from everything the memories show so far, the newest most of all, not by keeping the current number: a relationship that has grown (they confide, protect each other, kiss, call each other "love") moves up, one that has soured moves down. It must agree with the type and the text - lovers or partners who are tender with each other are 2 or 3, never 1;',
     '"intensity": how strong or central the relationship is to "from" - "low", "medium" or "high";',
     '"trend": "warming", "cooling", "stable" or "volatile";',
     '"text": one sentence describing it; "sources": the refs [m...] of the NEW memories that show it ([] if none)}.',
@@ -464,15 +468,24 @@ async function readAndClear(chatId, presetName, name) {
     return Array.isArray(value) ? value : [];
 }
 
+// How many times a part is run before its failure fails the compile: a
+// small model's answer that can't be read (broken JSON) is often fine the
+// next time.
+export const PART_ATTEMPTS = 2;
+
 // Runs one part's preset with `context`; resolves to its variables'
-// answers, by variable name. Throws when the run failed and wrote nothing.
+// answers, by variable name. Throws when every attempt failed and wrote
+// nothing.
 async function runPart(presetName, variables, context, chatId) {
     await updateIndependentPresetContext(presetName, context);
-    const { ok, error } = await runIndependent(presetName, chatId);
-    const answers = {};
-    for (const name of variables) answers[name] = await readAndClear(chatId, presetName, name);
-    if (!ok && Object.values(answers).every((a) => a.length === 0)) throw new Error(error);
-    return answers;
+    for (let attempt = 1; ; attempt++) {
+        const { ok, error } = await runIndependent(presetName, chatId);
+        const answers = {};
+        for (const name of variables) answers[name] = await readAndClear(chatId, presetName, name);
+        if (ok || Object.values(answers).some((a) => a.length > 0)) return answers;
+        if (attempt >= PART_ATTEMPTS) throw new Error(error);
+        console.warn(LOG_PREFIX, `${presetName} wrote nothing (${error}) - running it again`);
+    }
 }
 
 async function compileRun(ref, { rebuild }) {

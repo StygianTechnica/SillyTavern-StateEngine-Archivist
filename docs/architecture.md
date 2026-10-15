@@ -290,7 +290,7 @@ per chat
 (`archivist-compiled-...json`, next to the memories) - is updated by handing
 the model the current facts (`[f3] PERMANENT · employment · about Lucian:
 ...`) and relationships plus only the memories not `included` yet (`[m1]`,
-local refs), in batches of 60, and taking back the complete updated lists.
+local refs), in batches of 20 (`COMPILE_BATCH`), and taking back the complete updated lists.
 `parseCompileOutput()` keeps a continued fact's id and earlier sources, maps
 refs back to memory ids, resolves entity names to State Engine object ids,
 and refuses an answer that would drop every fact (the previous state is

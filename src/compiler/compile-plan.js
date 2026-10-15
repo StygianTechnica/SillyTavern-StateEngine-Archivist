@@ -344,6 +344,14 @@ export function parseCompileOutput(rawFacts, rawRelationships, { previous, refs,
 // One relationship per direction of a pair: from -> to.
 const relKey = (r) => `${entityKey(r.from)}|${entityKey(r.to)}`;
 
+// A relationship's type as the model gave it, without what it copied from
+// the context's relationship lines ("mentor · wary (-1) · high intensity ·
+// cooling: a note" -> "mentor").
+export function relationshipType(value) {
+    const raw = text(value).toLowerCase();
+    return raw.split(/\s*[·:(]\s*/)[0].trim() || raw;
+}
+
 export function parseRelationships(rawRelationships, { previous, refs, resolve }) {
     const previousRel = new Map((previous.relationships ?? []).map((r) => [relKey(r), r]));
     const dismissed = dismissedTest(previous.dismissed);
@@ -355,7 +363,7 @@ export function parseRelationships(rawRelationships, { previous, refs, resolve }
         const rel = {
             from: resolve(raw.from.trim()),
             to: resolve(raw.to.trim()),
-            type: raw.type.trim().toLowerCase(),
+            type: relationshipType(raw.type),
             polarity: normalizePolarity(raw.polarity),
             intensity: normalizeIntensity(raw.intensity),
             trend: normalizeTrend(raw.trend),
@@ -402,6 +410,31 @@ export function parseCharacters(rawCharacters, { previous, refs, resolve }) {
     return carriedForward(characters, previous.characters, (c) => entityKey(c.entity));
 }
 
+// A title's or name's own words: 3 letters or more, without the small
+// words every title has.
+const TITLE_STOP_WORDS = new Set(['the', 'and', 'for', 'with', 'from', 'into', 'about', 'his', 'her', 'their', 'its', 'our', 'your', 'who', 'what', 'how', 'why', 'new', 'old']);
+const titleWords = (value) => String(value ?? '').toLowerCase().replace(/['’]s\b/g, '').split(/[^\p{L}\p{N}]+/u)
+    .filter((w) => w.length >= 3 && !TITLE_STOP_WORDS.has(w));
+
+// Small models number their answer's items t1, t2, t3... afresh, so an id
+// can come back on something else entirely - and continuing the current
+// item under it would overwrite that one. An answer item whose title (or
+// name) shares no word with the current item of its id is taken as new:
+// its id is dropped, and the current one is kept (carriedForward()).
+function withoutReusedIds(raws, previousItems, titleOf) {
+    const previousById = new Map(previousItems.map((item) => [item.id, item]));
+    return raws.map((raw) => {
+        if (!raw || typeof raw !== 'object') return raw;
+        const current = previousById.get(String(raw.id ?? '').trim());
+        if (!current) return raw;
+        const mine = titleWords(titleOf(raw));
+        const theirs = new Set(titleWords(titleOf(current)));
+        if (mine.length === 0 || theirs.size === 0 || mine.some((w) => theirs.has(w))) return raw;
+        const { id, ...rest } = raw;
+        return rest;
+    });
+}
+
 // A thread or world entry the answer gives a NEW id while it is plainly a
 // current one (same words in its title or name, and the current one not
 // answered under its own id) continues that one. `raws` are the answer's
@@ -433,7 +466,8 @@ export function parseThreads(rawThreads, { previous, refs, resolve }) {
     const nextId = idAssigner('t', previous.threads ?? []);
     const dismissed = dismissedTest(previous.dismissed);
     const threads = [];
-    const raws = matchByWords(Array.isArray(rawThreads) ? rawThreads : [], previous.threads ?? [], (t) => looseKey(t?.title), 't');
+    const fresh = withoutReusedIds(Array.isArray(rawThreads) ? rawThreads : [], previous.threads ?? [], (t) => t.title);
+    const raws = matchByWords(fresh, previous.threads ?? [], (t) => looseKey(t?.title), 't');
     for (const raw of raws) {
         if (!raw || typeof raw !== 'object' || !(isText(raw.text) || isText(raw.title)) || dismissed('thread', raw)) continue;
         const id = nextId(raw);
@@ -476,7 +510,8 @@ export function parseWorld(rawWorld, { previous, refs, resolve }) {
     const nextId = idAssigner('w', previous.world ?? []);
     const dismissed = dismissedTest(previous.dismissed);
     const world = [];
-    const raws = matchByWords(Array.isArray(rawWorld) ? rawWorld : [], previous.world ?? [], (w) => (w?.name ? `${normalizeWorldKind(w.kind)}:${looseKey(w.name)}` : ''), 'w');
+    const fresh = withoutReusedIds(Array.isArray(rawWorld) ? rawWorld : [], previous.world ?? [], (w) => w.name);
+    const raws = matchByWords(fresh, previous.world ?? [], (w) => (w?.name ? `${normalizeWorldKind(w.kind)}:${looseKey(w.name)}` : ''), 'w');
     for (const raw of raws) {
         if (!raw || typeof raw !== 'object' || !(isText(raw.text) || isText(raw.name)) || dismissed('world', raw)) continue;
         const id = nextId(raw);
