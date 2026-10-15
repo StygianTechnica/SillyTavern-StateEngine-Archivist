@@ -42,7 +42,7 @@ import { readJsonFile, writeJsonFile } from '../memory/storage.js';
 import { runIndependent } from '../extraction/independent-run.js';
 import {
     EMPTY_COMPILED, COMPILED_SCHEMA, refsFor, compileContext, worldContext, parseCompileOutput, parseCharacters, parseThreads, parseWorld, parseSummary, changesSince, buildCompiledView,
-    newestMessageIndex, parseTension, editCompiledItem, removeCompiledItem, editCompiledSummary,
+    newestMessageIndex, parseTension, editCompiledItem, removeCompiledItem, editCompiledSummary, addCompiledThread,
 } from './compile-plan.js';
 import { meaningfulCount, shouldCompile } from './schedule.js';
 import { TENSION_MAX } from './compiled-schema.js';
@@ -73,7 +73,8 @@ export const WORLD_VARIABLE = 'compiled_world';
 // 9: plan steps on threads; story tension.
 // 10: relationship polarity judged afresh, agreeing with type and text.
 // 11: phrase tics found in code - the model's list removed.
-export const COMPILER_VARIABLE_VERSION = 11;
+// 12: plan memories become plan threads.
+export const COMPILER_VARIABLE_VERSION = 12;
 
 // Variables an older version had, deleted when the version moves on:
 // [preset, variable].
@@ -164,8 +165,9 @@ const THREADS_INSTRUCTIONS = [
     '"goal": for a plan, the end it works toward ("" if it is not a plan);',
     '"steps": for a plan, its steps in order ([] if it is not a plan) - each {"text": what is to be done; "status": "pending", "active" (being done now), "done", "skipped" (no longer needed) or "failed"; "involved": the names involved in that step; "note": a condition, cost or danger attached to it ("" if none)};',
     '"sources": the refs [m...] of the NEW memories it uses ([] if none)}.',
-    'A plan is any sequence of steps the characters lay out to get somewhere - first get X, then win over Y, then trade with Z - even when nobody calls it a plan: record it as one thread with its goal and every step in order.',
+    'A plan is any sequence of steps the characters lay out to get somewhere - first get X, then win over Y, then trade with Z - even when nobody calls it a plan: record it as one thread with its goal and every step in order. Every NEW memory of type "plan" is such a thread: continue the current thread it belongs to (update its steps), or add it - never leave one out.',
     'Keep a plan\'s current steps in their order and update their status from the new memories; when the characters change the plan, add, reorder or mark steps "skipped" - never remove a step that is done.',
+    'A thread "written by the author" is the story the author wants followed: always keep it, with its title and steps as they are - only update its status, its progress and each step\'s status as the new memories move it along.',
 ].join(' ');
 
 const WORLD_INSTRUCTIONS = [
@@ -496,8 +498,12 @@ async function compileRun(ref, { rebuild }) {
     const settings = getSettings();
     const chatKey = chatKeyFor(ref);
     const records = await getAllMemories(chatKey);
-    // A rebuild starts over, but what the user deleted stays deleted.
-    let compiled = rebuild ? { ...EMPTY_COMPILED, dismissed: (await compiledFor(chatKey)).dismissed ?? [] } : await compiledFor(chatKey);
+    // A rebuild starts over, but what the user deleted stays deleted and
+    // the threads they wrote stay written.
+    const current = await compiledFor(chatKey);
+    let compiled = rebuild
+        ? { ...EMPTY_COMPILED, dismissed: current.dismissed ?? [], threads: (current.threads ?? []).filter((t) => t.added_by === 'user') }
+        : current;
     const { added } = changesSince(compiled, records);
     if (!getChatEntry(chatKey) || (added.length === 0 && !rebuild)) return 'nothing';
     const withWorld = settings.compileWorld !== false;
@@ -695,6 +701,13 @@ async function changeCompiled(chatId, change) {
 // the fields to change (compile-plan.js editCompiledItem).
 export function editCompiledMemoryItem(chatId, kind, key, patch) {
     return changeCompiled(chatId, (compiled) => editCompiledItem(compiled, kind, key, patch));
+}
+
+// A story thread the user writes (compile-plan.js addCompiledThread):
+// later compiles move it along but keep it as written. False without a
+// title or text.
+export function addCompiledMemoryThread(chatId, fields) {
+    return changeCompiled(chatId, (compiled) => addCompiledThread(compiled, fields));
 }
 
 // Deletes one compiled item; later compiles leave it out too.

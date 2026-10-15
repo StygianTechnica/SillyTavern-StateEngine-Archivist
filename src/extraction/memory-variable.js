@@ -54,7 +54,8 @@ const ITEM_SHAPE = [
 ].join(' ');
 
 // What to look for - shared by both modes.
-const WHAT_COUNTS = 'Record what happened or came to light: events (what someone did, decided or went through), facts (about a person, place or thing), relationship changes and secrets. '
+const WHAT_COUNTS = 'Record what happened or came to light: events (what someone did, decided or went through), facts (about a person, place or thing), relationship changes, secrets and plans. '
+    + 'A PLAN is a course of action the characters lay out or agree on to reach a goal, even when nobody calls it a plan ("first we find the old map in the archive, then we get the ferryman on our side, then we cross before the storm"): record it as ONE memory of subtype "plan", "high" importance, tagged "important", whose text gives the goal and every step in order ("Plan to cross the river: 1. find the old map in the archive; 2. win over the ferryman, who wants payment; 3. cross before the storm breaks"), with each step\'s conditions or dangers. A plan always counts among the memories that matter most. '
     + 'Include small concrete details too, as "low" importance - where someone went, what they bought, how they felt about it. Do not record pure description of the surroundings.';
 
 const LIVE_INSTRUCTIONS = [

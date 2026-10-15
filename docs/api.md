@@ -217,6 +217,8 @@ thread = {
   progress,                                 // what has happened with it so far
   entity: entity | null,                    // the object its title names - a quest object
   involved: [entity],
+  added_by,                                 // 'user' for a thread the user wrote (memory browser) -
+                                            // compiles keep it as written and only move it along
   goal,                                     // a plan's end ('' when not a plan)
   steps: [{                                 // a plan's steps in order ([] when not a plan)
     text,

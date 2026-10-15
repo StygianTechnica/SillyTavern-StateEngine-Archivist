@@ -35,7 +35,9 @@ export const IMPORTANCE_LEVELS = Object.freeze(['low', 'medium', 'high']);
 
 // Subtypes the extraction prompt offers. Subtype is an open string (the
 // spec's "etc."), so this list is a suggestion, not a whitelist.
-export const KNOWN_SUBTYPES = Object.freeze(['event', 'fact', 'relationship', 'secret']);
+// plan: a course of action the characters lay out or agree on - kept whole,
+// its steps in order, so the compiler can follow it as a quest.
+export const KNOWN_SUBTYPES = Object.freeze(['event', 'fact', 'relationship', 'secret', 'plan']);
 
 // Prioritization tags. Only these are kept - a closed list, so they can be
 // filtered on.

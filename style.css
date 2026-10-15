@@ -610,3 +610,8 @@
     resize: vertical;
     min-height: 5em;
 }
+
+.ar-mb-add {
+    align-self: flex-start;
+    margin: 2px 0 6px;
+}

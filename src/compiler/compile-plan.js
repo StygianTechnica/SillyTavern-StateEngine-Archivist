@@ -23,6 +23,7 @@
 //                   involved: [entity], goal, steps: [step], sources } -
 //                   plot hooks, open threads, quest seeds; a plan has a
 //                   `goal` and its `steps` in order (else '' and [])
+//                 added_by 'user' when the user wrote it (keepAuthored())
 //   step          { text, status (STEP_STATUSES), involved: [entity], note }
 //   world entry   { id: "w<n>", kind (WORLD_KINDS), name, text,
 //                   entity (the object it names, or null), known_by:
@@ -252,7 +253,8 @@ export function worldContext(previous, batch, nameOf = () => null) {
     if (!previous.threads?.length) lines.push('(none yet)');
     for (const t of previous.threads ?? []) {
         const involved = entityList(t.involved);
-        lines.push(`[${t.id}] ${t.kind} · ${t.status}${involved ? ` · involves ${involved}` : ''}: ${t.title} - ${t.text}${t.progress ? ` (progress: ${t.progress})` : ''}`);
+        const author = t.added_by === 'user' ? ' · written by the author' : '';
+        lines.push(`[${t.id}] ${t.kind} · ${t.status}${author}${involved ? ` · involves ${involved}` : ''}: ${t.title} - ${t.text}${t.progress ? ` (progress: ${t.progress})` : ''}`);
         if (t.goal) lines.push(`    goal: ${t.goal}`);
         (t.steps ?? []).forEach((s, i) => lines.push(`    ${i + 1}. [${s.status}] ${s.text}${s.note ? ` (${s.note})` : ''}`));
     }
@@ -429,7 +431,9 @@ function withoutReusedIds(raws, previousItems, titleOf) {
     return raws.map((raw) => {
         if (!raw || typeof raw !== 'object') return raw;
         const current = previousById.get(String(raw.id ?? '').trim());
-        if (!current) return raw;
+        // A thread the user wrote keeps its own title whatever the answer
+        // calls it (keepAuthored()), so an answer under its id is about it.
+        if (!current || current.added_by === 'user') return raw;
         const mine = titleWords(titleOf(raw));
         const theirs = new Set(titleWords(titleOf(current)));
         if (mine.length === 0 || theirs.size === 0 || mine.some((w) => theirs.has(w))) return raw;
@@ -490,8 +494,58 @@ export function parseThreads(rawThreads, { previous, refs, resolve }) {
             steps: Array.isArray(raw.steps) && raw.steps.length ? parseSteps(raw.steps, resolve) : (previousById.get(id)?.steps ?? []),
             sources: [...new Set([...(previousById.get(id)?.sources ?? []), ...sourceIdsOf(raw.sources, refs)])],
         });
+        const authored = previousById.get(id);
+        if (authored?.added_by === 'user') threads[threads.length - 1] = keepAuthored(authored, threads.at(-1));
     }
     return withoutDuplicateThreads(carriedForward(threads, previous.threads, (t) => t.id), new Set(threads.map((t) => t.id)));
+}
+
+// A thread the user wrote (added_by 'user') is the story they want
+// followed: the compiler's answer for it (`latest`) only moves it along -
+// its status, progress, sources and each step's status - while the
+// title, text, goal and steps stay the user's. A step's status comes from
+// the answer's step with the most words in common (else the one at its
+// position).
+export function keepAuthored(authored, latest) {
+    const theirs = latest.steps ?? [];
+    const steps = (authored.steps ?? []).map((step, i) => {
+        const words = new Set(titleWords(step.text));
+        const best = theirs
+            .map((s) => ({ s, shared: titleWords(s.text).filter((w) => words.has(w)).length }))
+            .sort((a, b) => b.shared - a.shared)[0];
+        const match = best?.shared > 0 ? best.s : theirs[i];
+        return match ? { ...step, status: match.status } : step;
+    });
+    return {
+        ...authored,
+        status: latest.status ?? authored.status,
+        progress: latest.progress || authored.progress,
+        steps,
+        sources: [...new Set([...(authored.sources ?? []), ...(latest.sources ?? [])])],
+    };
+}
+
+// A new thread the user writes (the memory browser): `fields` as the edit
+// form gives them (compiledItemKey's thread fields - title, kind, status,
+// text, progress, goal, steps). Added first, as added_by 'user', so later
+// compiles keep it as written (keepAuthored()) and a Rebuild keeps it too.
+// Null without a title or text.
+export function addCompiledThread(compiled, fields = {}) {
+    const threads = compiled.threads ?? [];
+    const base = {
+        id: idAssigner('t', threads)({}), kind: 'quest', title: '', text: '', status: 'active', progress: '',
+        entity: null, involved: [], goal: '', steps: [], sources: [], added_by: 'user',
+    };
+    const thread = patched('thread', base, fields ?? {});
+    if (!thread.title && !thread.text) return null;
+    thread.title ||= thread.text.split(/[.!?]/)[0].slice(0, 80);
+    thread.text ||= thread.title;
+    const key = dismissKey('thread', thread);
+    return {
+        ...compiled,
+        threads: [thread, ...threads],
+        dismissed: (compiled.dismissed ?? []).filter((d) => !(d.kind === 'thread' && d.key === key)),
+    };
 }
 
 // Small models copy a thread under a new id ("Understand Remus' Departure",
@@ -537,6 +591,12 @@ function withoutDuplicateThreads(threads, answeredIds) {
         const firstOf = (pick) => byAge.map(pick).find((value) => (Array.isArray(value) ? value.length : value)) ?? pick(newest);
         const involved = new Map();
         for (const e of byAge.flatMap((t) => t.involved ?? [])) if (!involved.has(entityKey(e))) involved.set(entityKey(e), e);
+        // A copy of a thread the user wrote: theirs, moved along by the newest.
+        const authored = group.find((t) => t.added_by === 'user');
+        if (authored) {
+            const merged = newest === authored ? authored : keepAuthored(authored, newest);
+            return { ...merged, involved: [...involved.values()], sources: [...new Set(byAge.slice().reverse().flatMap((t) => t.sources ?? []))] };
+        }
         return {
             ...newest,
             id: [...group].sort((a, b) => idNumber(a) - idNumber(b))[0].id,

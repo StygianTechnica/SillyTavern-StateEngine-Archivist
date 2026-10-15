@@ -11,8 +11,9 @@ import { getSettings } from '../src/settings.js';
 import { colorTagFor, normalizeClassification, withColorTag, COLOR_TAGS } from '../src/compiler/compiled-schema.js';
 import {
     refsFor, compileContext, worldContext, parseCompileOutput, parseCharacters, parseThreads, parseWorld, changesSince, buildCompiledView, EMPTY_COMPILED,
-    editCompiledItem, removeCompiledItem, editCompiledSummary, compiledItemKey, dismissKey, parseTension, relationshipType,
+    editCompiledItem, removeCompiledItem, editCompiledSummary, compiledItemKey, dismissKey, parseTension, relationshipType, keepAuthored, addCompiledThread,
 } from '../src/compiler/compile-plan.js';
+import { memoryVariableDef } from '../src/extraction/memory-variable.js';
 import {
     normalizePolarity, polarityLabel, normalizeIntensity, normalizeTrend, normalizeThreadStatus, normalizeWorldKind, normalizeSecretStatus,
     normalizeStepStatus, stepsToText, stepsFromText, currentStep, normalizeTensionLevel, tensionOverall,
@@ -223,6 +224,24 @@ describe('planning and parsing', () => {
         expect(relationshipType('rival: old grudge')).toBe('rival');
         expect(relationshipType('friend')).toBe('friend');
         expect(relationshipType('· odd')).toBe('· odd');
+    });
+
+    it('asks extraction for a plan as one memory with its steps in order', () => {
+        for (const mode of ['live', 'catch-up']) {
+            const instructions = memoryVariableDef(mode).prompted.instructions;
+            expect(instructions).toContain('record it as ONE memory of subtype "plan"');
+            expect(instructions).toMatch(/subtype": one of [^;]*plan/);
+        }
+    });
+
+    it('keeps a thread the user wrote as written, taking only how far it got from an answer', () => {
+        const added = addCompiledThread(previous, { title: 'Supplies', steps: '[pending] Salvage old books from the library\nWin over Niamh\nTrade with Graxx', goal: 'Get supplies' });
+        const [mine] = added.threads;
+        expect(mine).toMatchObject({ id: 't2', added_by: 'user', kind: 'quest', status: 'active', goal: 'Get supplies' });
+        expect(addCompiledThread(previous, { title: '  ' })).toBeNull();
+        const moved = keepAuthored(mine, { ...mine, title: 'Other', goal: 'x', status: 'resolved', progress: 'Done.', steps: [{ text: 'Niamh agreed', status: 'done' }, { text: 'books found', status: 'done' }], sources: ['m_a'] });
+        expect(moved).toMatchObject({ title: 'Supplies', goal: 'Get supplies', status: 'resolved', progress: 'Done.', sources: ['m_a'] });
+        expect(moved.steps.map((st) => [st.text, st.status])).toEqual([['Salvage old books from the library', 'done'], ['Win over Niamh', 'done'], ['Trade with Graxx', 'pending']]);
     });
 
     it('reads tension levels 0..5 and averages them', () => {

@@ -79,7 +79,7 @@ describe('the memory browser window', () => {
         fake = resetFakeStateEngine();
         fake.addObject('chr_mira', 'character', 'Mira');
         document.body.innerHTML = '';
-        globalThis.toastr = { info: vi.fn(), success: vi.fn(), error: vi.fn() };
+        globalThis.toastr = { info: vi.fn(), success: vi.fn(), error: vi.fn(), warning: vi.fn(), clear: vi.fn() };
         Object.assign(getContext(), { POPUP_TYPE: { CONFIRM: 2 }, POPUP_RESULT: { AFFIRMATIVE: 1 } });
         answerPopup(true);
         characterChats.set('alice.png', ['Chat A']);
@@ -272,6 +272,49 @@ describe('the memory browser window', () => {
         q('.ar-mb-profile [data-mb-remove="relationship"]').click();
         await waitFor(async () => expect((await getCompiledMemory()).relationships).toEqual([]));
         expect(q('[data-mb-remove="relationship"]')).toBeNull();
+    });
+
+    it('lets the user write a story thread with its steps, kept through compiles and a rebuild', async () => {
+        fake.respond = async () => ({ archivist__compiled_facts: [{ text: 'Mira keeps secrets.', classification: 'PERMANENT', entities: ['Mira'], sources: ['m1'] }] });
+        const { compileOpenChat, getCompiledMemory } = await import('../src/compiler/compiler.js');
+        await compileOpenChat();
+        await openMemoryBrowser({ view: 'compiled' });
+        await waitFor(() => expect(q('[data-mb-add="thread"]')).not.toBeNull());
+
+        q('[data-mb-add="thread"] span').click();
+        const set = (field, value) => {
+            const input = q(`.ar-mb-editing [data-mb-field="${field}"]`);
+            input.value = value;
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+        };
+        expect(q('.ar-mb-editing [data-mb-field="kind"]').value).toBe('quest');
+        // No title yet: not saved.
+        q('[data-mb-save]').click();
+        await waitFor(() => expect(toastr.warning).toHaveBeenCalledWith('Give the story thread a title first.', 'Archivist'));
+        set('title', 'Supplies from the Ravagers');
+        set('goal', 'Get supplies for the wasteland');
+        set('steps', 'Salvage old books from the ruined library | trade goods\nWin over Niamh, a Redhaven scout\nTrade with Graxx and the Ravagers');
+        q('[data-mb-save]').click();
+        await waitFor(() => expect(qa('.ar-mb-step')).toHaveLength(3));
+        expect(q('.ar-mb-thread .ar-mb-tag').textContent).toBe('written by you');
+        const [thread] = (await getCompiledMemory()).threads;
+        expect(thread).toMatchObject({ title: 'Supplies from the Ravagers', added_by: 'user', status: 'active', goal: 'Get supplies for the wasteland' });
+        expect(thread.steps.map((s) => [s.text, s.status, s.note])).toEqual([
+            ['Salvage old books from the ruined library', 'pending', 'trade goods'], ['Win over Niamh, a Redhaven scout', 'pending', ''], ['Trade with Graxx and the Ravagers', 'pending', ''],
+        ]);
+
+        // The compiler moves it along but keeps it as written - and a rebuild keeps it.
+        fake.respond = async (context) => {
+            if (context.includes('Story threads:')) expect(context).toContain(`[${thread.id}] quest · active · written by the author`);
+            return {
+                archivist__compiled_facts: [{ text: 'Mira keeps secrets.', sources: ['m1'] }],
+                archivist__compiled_threads: [{ id: thread.id, title: 'Ravager trade', status: 'active', progress: 'They have the books.', steps: [{ text: 'Get the old books', status: 'done' }, { text: 'Niamh', status: 'active' }] }],
+            };
+        };
+        await compileOpenChat({ rebuild: true });
+        const kept = (await getCompiledMemory()).threads.find((t) => t.id === thread.id);
+        expect(kept).toMatchObject({ title: 'Supplies from the Ravagers', progress: 'They have the books.', added_by: 'user' });
+        expect(kept.steps.map((s) => s.status)).toEqual(['done', 'active', 'pending']);
     });
 
     it('offers to compile a chat that never was', async () => {

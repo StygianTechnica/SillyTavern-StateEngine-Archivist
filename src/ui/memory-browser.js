@@ -27,7 +27,7 @@ import { groupChats, filterChoices, filterRecords, shortDate, sourceLabel, tensi
 import { confirmAction } from './confirm.js';
 import {
     getCompiledMemory, compileOpenChat, isCompiling, getCompilerStatus, onCompilerStatus, COMPILED_CHANGED_EVENT,
-    editCompiledMemoryItem, deleteCompiledMemoryItem, editCompiledMemorySummary,
+    editCompiledMemoryItem, deleteCompiledMemoryItem, editCompiledMemorySummary, addCompiledMemoryThread,
 } from '../compiler/compiler.js';
 import { findViewItem, editValues, buildEditForm, itemButtons } from './compiled-edit.js';
 import { getChatPhraseTics, removePhraseTic, PHRASE_TICS_CHANGED_EVENT } from '../compiler/phrase-tic-tracker.js';
@@ -405,7 +405,8 @@ function threadRowView(thread) {
     if (thread.entity) meta.append(el('span', 'ar-mb-tag', `${thread.entity.type ?? 'object'}: ${thread.entity.name}`));
     const link = messageLink(thread.message_range);
     if (link) meta.append(link);
-    if (thread.edited_at) meta.append(el('span', 'ar-mb-tag', 'edited'));
+    if (thread.added_by === 'user') meta.append(el('span', 'ar-mb-tag', 'written by you'));
+    else if (thread.edited_at) meta.append(el('span', 'ar-mb-tag', 'edited'));
     meta.append(itemButtons('thread', thread.id));
     row.append(meta, el('div', 'ar-mb-record-text', thread.text));
     if (thread.progress) row.append(el('div', 'ar-mb-record-entities', `Progress: ${thread.progress}`));
@@ -588,7 +589,7 @@ function renderCompiled() {
         section('Session', view.session_details.map(factRow), 'Nothing about this part of the story.'),
         section('Relationship map', map ? [map] : [], 'Needs relationships between at least two characters.'),
         section('Relationships', view.relationships.map((r) => relationshipRow(r)), 'No relationships yet.'),
-        section('Story threads and quests', view.threads.map(threadRow), 'No plot hooks, open threads or quests yet.'),
+        section('Story threads and quests', [newThreadRow(), ...view.threads.map(threadRow), ...(view.threads.length ? [] : [el('div', 'ar-mb-empty', 'No plot hooks, open threads or quests yet.')])], ''),
         ...worldSections,
         section('Timeline', view.timeline.map(timelineRow), 'No events yet.'),
         section('Phrase tics', [...state.tics].sort((a, b) => b.count - a.count || String(b.last_used).localeCompare(String(a.last_used))).map(ticRow), 'No repeated stock phrases found in this chat yet.'),
@@ -727,6 +728,28 @@ async function deleteSelectedChat() {
 
 // ---- editing the compiled memory
 
+// The key of a story thread the user is writing, not yet saved.
+const NEW_THREAD = 'new';
+
+// The button to write a story thread - or its form while one is written.
+// A thread the user writes is kept as written: compiles only move it along.
+function newThreadRow() {
+    return editable('thread', NEW_THREAD, () => {
+        const button = el('button', 'menu_button menu_button_icon ar-mb-add');
+        button.type = 'button';
+        button.dataset.mbAdd = 'thread';
+        button.title = 'Write a quest or plan the story should follow - its goal and steps in order. The compiler keeps it as you wrote it and marks the steps done as the story gets there.';
+        button.append(el('i', 'fa-solid fa-plus'), el('span', '', 'Write a story thread'));
+        return button;
+    });
+}
+
+function startAddThread() {
+    state.editing = { kind: 'thread', key: NEW_THREAD, values: editValues('thread', { kind: 'quest', status: 'active', steps: [] }) };
+    render();
+    overlay.querySelector('.ar-mb-editing [data-mb-field]')?.focus();
+}
+
 const KIND_NAMES = { fact: 'fact', relationship: 'relationship', character: 'set of character insights', thread: 'story thread', world: 'world entry' };
 
 function startEdit(kind, key) {
@@ -741,10 +764,17 @@ async function saveEdit() {
     const editing = state.editing;
     if (!editing) return;
     try {
-        const changed = editing.kind === 'summary'
-            ? await editCompiledMemorySummary(state.selectedKey, editing.key, editing.values.text)
-            : await editCompiledMemoryItem(state.selectedKey, editing.kind, editing.key, editing.values);
-        if (!changed) toastr.warning('That item is gone - the compiled memory changed meanwhile.', 'Archivist');
+        if (editing.kind === 'thread' && editing.key === NEW_THREAD) {
+            if (!await addCompiledMemoryThread(state.selectedKey, editing.values)) {
+                toastr.warning('Give the story thread a title first.', 'Archivist');
+                return;
+            }
+        } else {
+            const changed = editing.kind === 'summary'
+                ? await editCompiledMemorySummary(state.selectedKey, editing.key, editing.values.text)
+                : await editCompiledMemoryItem(state.selectedKey, editing.kind, editing.key, editing.values);
+            if (!changed) toastr.warning('That item is gone - the compiled memory changed meanwhile.', 'Archivist');
+        }
         state.editing = null;
     } catch (err) {
         console.warn(LOG_PREFIX, 'could not save the edit', err);
@@ -788,6 +818,10 @@ function onClick(e) {
         state.view = viewButton.dataset.mbView;
         state.editing = null;
         render();
+        return;
+    }
+    if (e.target.closest('[data-mb-add="thread"]')) {
+        startAddThread();
         return;
     }
     const edit = e.target.closest('[data-mb-edit]');
