@@ -74,15 +74,19 @@
                     <span>Also compile story threads, quests and the world</span>
                 </label>
                 <div class="ar-row">
-                    <label class="checkbox_label" title="The compiler looks for stock phrases the narration keeps repeating (a wry smile, a tone turning serious...), and each new reply is checked against them. While one is in use, the Curator block Phrase tics to vary asks the model to word things differently - nothing is ever banned.">
+                    <label class="checkbox_label" title="Each compile looks for wording the AI repeats across its latest replies - narration or dialogue (a wry smile, we're in this together...) - and each new reply is checked against those and the watch list. While one is in use, the Curator block Phrase tics to vary asks the model to word things differently - nothing is ever banned.">
                         <input id="ar_phrase_tics" type="checkbox" />
                         <span>Track phrase tics</span>
                     </label>
-                    <label class="ar-field" title="A tic loses one count after this many AI replies without it, and is forgotten at zero.">
+                    <label class="ar-field" title="A tic loses one count after this many AI replies without it. At zero it rests - kept, and flagged again the moment it comes back.">
                         <span>Fade after (replies)</span>
                         <input id="ar_phrase_tic_fade" type="number" class="text_pole" min="1" max="200" step="1" />
                     </label>
                 </div>
+                <label class="ar-field ar-watch" title="Phrases this model is known to overuse - each model has its own list, shared by every chat it writes: one use in a reply flags it. Verb forms and names don't matter (cupped his cheek also catches cupping Remus's cheeks). Tics the compiler finds are added here; a phrase you take out is never tracked again.">
+                    <span>Watched phrases for <b id="ar_phrase_tic_model"></b> (one per line)</span>
+                    <textarea id="ar_phrase_tic_watch" class="text_pole" rows="5"></textarea>
+                </label>
                 <div class="ar-row">
                     <label class="ar-field" title="Compile once this many new memories have arrived (near-repeats don't count).">
                         <span>After new memories</span>

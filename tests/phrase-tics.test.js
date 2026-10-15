@@ -1,6 +1,7 @@
-// Phrase tics: finding repeated wording (phrase-tics.js), the compiler
-// judging it, following it reply by reply with decay
-// (phrase-tic-tracker.js), and the Curator block asking for variety.
+// Phrase tics: finding repeated wording in code (phrase-tics.js), following
+// it reply by reply - fading to dormant, flagged again on its return - and
+// the watch list per model (phrase-tic-tracker.js), and the Curator block
+// asking for variety.
 
 import { getContext } from './harness/st.js';
 import { resetFakeStateEngine } from './harness/state-engine.js';
@@ -8,9 +9,11 @@ import { loadCurrentChat, addMemoryRecords } from '../src/memory/archivist.js';
 import { getCurrentChatRef, chatKeyFor } from '../src/memory/registry.js';
 import { getSettings } from '../src/settings.js';
 import {
-    phraseKey, usesPhrase, findCandidates, candidateLines, parseTicAnswer, addFound, updateForReply, activeTics,
+    phraseKey, usesPhrase, findCandidates, storyWordsOf, addFound, updateForReply, activeTics, prune, watchEntry, WARN_AT, MAX_TRACKED,
 } from '../src/compiler/phrase-tics.js';
-import { getChatPhraseTics, countNewestReply, removePhraseTic } from '../src/compiler/phrase-tic-tracker.js';
+import {
+    getChatPhraseTics, countNewestReply, removePhraseTic, getWatchList, getWatchText, setWatchText, currentModel, UNKNOWN_MODEL,
+} from '../src/compiler/phrase-tic-tracker.js';
 import { phraseTicBlock, REFERENCE_MARKER } from '../src/context/prompt-context.js';
 import { compileOpenChat } from '../src/compiler/compiler.js';
 import { getPhraseTics } from '../src/public-api.js';
@@ -18,92 +21,106 @@ import { getPhraseTics } from '../src/public-api.js';
 vi.mock('../src/api/state-engine.js', () => import('./harness/state-engine-mock.js'));
 
 const replies = [
-    { index: 1, text: 'Kael leaned back. A wry smile tugged at his lips as the fire cracked.' },
-    { index: 3, text: 'Mira laughed, and a wry smile tugged at her lips. *Outside, rain fell.*' },
+    { index: 1, text: 'Kael leaned back. A wry smile tugged at his lips as the fire cracked. "We are in this together," he said.' },
+    { index: 3, text: 'Mira laughed, and a wry smile tugged at her lips. *Outside, rain fell.* "We are in this together, you know."' },
     { index: 5, text: 'The door opened. His tone turned serious when he spoke of the war.' },
     { index: 7, text: 'Her tone turned serious. "We leave at dawn," she said.' },
 ];
+const keys = (list) => list.map((c) => c.key);
+
+describe('matching wording', () => {
+    it('ignores pronouns, verb forms, plurals, markup and a name\'s possessive', () => {
+        expect(phraseKey('Cupping HER cheeks.')).toBe('cup their cheek');
+        expect(phraseKey('cupped Remus\'s cheek')).toBe('cup their cheek');
+        expect(phraseKey('cups his cheek')).toBe('cup their cheek');
+        expect(usesPhrase('...and *a wry smile tugged at his lips*.', phraseKey('wry smile tugged at their lips'))).toBe(true);
+        expect(usesPhrase('Varyn gently cupped Remus\'s cheeks.', phraseKey('cupped his cheek'))).toBe(true);
+        expect(usesPhrase('a wry smile', phraseKey('wry smile tugged at their lips'))).toBe(false);
+    });
+
+    it('takes a watch-list line of two words or more', () => {
+        expect(watchEntry(' "Cupped his cheek." ')).toEqual({ phrase: 'Cupped his cheek', key: 'cup their cheek' });
+        expect(watchEntry('smirk')).toBeNull();
+        expect(watchEntry('')).toBeNull();
+    });
+});
 
 describe('finding repeated wording', () => {
-    it('matches across pronouns and markup', () => {
-        expect(phraseKey('A wry smile tugged at HER lips.')).toBe('a wry smile tugged at their lips');
-        expect(usesPhrase('...and *a wry smile tugged at his lips*.', 'wry smile tugged at their lips')).toBe(true);
-        expect(usesPhrase('a wry smile', 'wry smile tugged at their lips')).toBe(false);
-    });
-
-    it('finds phrases repeated in different replies, longest first, without their shorter parts', () => {
-        const candidates = findCandidates(replies);
-        expect(candidates.map((c) => c.key)).toEqual(['a wry smile tugged at their lips', 'their tone turned serious']);
-        expect(candidates[0]).toMatchObject({ ref: 'p1', text: 'A wry smile tugged at his lips', replies: [1, 3] });
-        expect(candidates[0].example).toBe('A wry smile tugged at his lips as the fire cracked.');
-        // Repeated within one reply only, or only filler words: not a candidate.
+    it('finds wording repeated in different replies - narration and dialogue - most repeated, then longest, first', () => {
+        const found = findCandidates(replies);
+        expect(found.map((c) => c.text)).toEqual(['A wry smile tugged at his lips', 'We are in this together', 'His tone turned serious']);
+        expect(found[0]).toMatchObject({ key: 'a wry smil tug at their lip', replies: [1, 3] });
+        expect(found[0].example).toBe('A wry smile tugged at his lips as the fire cracked.');
+        // Repeated within one reply only, or only filler words: not found.
         expect(findCandidates([{ index: 1, text: 'and then it was and then it was' }, { index: 2, text: 'nothing alike here at all' }])).toEqual([]);
-        expect(candidateLines([])).toEqual(['Repeated phrases in the latest replies:', '(none)']);
     });
 
-    it('keeps one candidate per phrase, allows short tics that recur often, and skips short ones around a name', () => {
-        const candidates = findCandidates([
-            { index: 1, text: 'Varyn reached out, placing a hand on Remus\'s shoulder. Rain fell on the ruined tower. He raised an eyebrow. They went back to Remus.' },
-            { index: 2, text: 'The wind howled across the plain. Mira reached out, placing a hand on Remus\'s shoulder. She raised an eyebrow, amused. Kael went back to Remus.' },
-            { index: 3, text: 'Dawn broke slowly. He raised an eyebrow at the map. Varyn walked back to Remus quietly.' },
-        ]);
-        const keys = candidates.map((c) => c.key);
-        // The long phrase once - not its shifted slices.
-        expect(keys.filter((k) => k.includes('hand on remus'))).toHaveLength(1);
-        expect(keys).toContain('they raised an eyebrow');
-        expect(keys.some((k) => k === 'back to remus')).toBe(false);
-        // Three words need three replies.
+    it('leaves out names, the story\'s own words, what the user writes too, and what was ignored', () => {
+        const story = [
+            { index: 1, text: 'They walked to the old library at dusk. Varyn went back to Remus.' },
+            { index: 2, text: 'Rain fell. They walked to the old library again. Mira went back to Remus.' },
+            { index: 3, text: 'Night came. They walked to the old library. Kael went back to Remus.' },
+        ];
+        expect(keys(findCandidates(story)).some((k) => k.includes('remus'))).toBe(false);
+        expect(keys(findCandidates(story)).some((k) => k.includes(phraseKey('walked to the old library')))).toBe(true);
+        expect([...storyWordsOf(['The Liston Library', 'Varyn Vance'])]).toEqual(['liston', 'library', 'varyn', 'vanc']);
+        expect(keys(findCandidates(story, { storyWords: storyWordsOf(['The Liston Library']) })).some((k) => k.includes('library'))).toBe(false);
+        expect(findCandidates(replies, { userTexts: ['I tell him we are in this together.'] }).map((c) => c.text)).not.toContain('We are in this together');
+        expect(findCandidates(replies, { ignored: new Set([phraseKey('his tone turned serious')]) }).map((c) => c.text)).not.toContain('His tone turned serious');
+    });
+
+    it('keeps one candidate per phrase, needs three replies for three words, and never runs across punctuation', () => {
+        const found = keys(findCandidates([
+            { index: 1, text: 'Varyn reached out, placing a hand on his shoulder. He raised an eyebrow.' },
+            { index: 2, text: 'Mira reached out, placing a hand on her shoulder. She raised an eyebrow, amused.' },
+            { index: 3, text: 'Dawn broke slowly. He raised an eyebrow at the map.' },
+        ]));
+        expect(found.filter((k) => k.includes('hand on their shoulder'))).toHaveLength(1);
+        expect(found).toContain(phraseKey('he raised an eyebrow'));
         expect(findCandidates([{ index: 1, text: 'Mira raised an eyebrow.' }, { index: 2, text: 'Kael raised an eyebrow.' }])).toEqual([]);
-    });
-
-    it('never runs a phrase across punctuation, into dialogue, or onto a dangling word', () => {
-        const keys = findCandidates([
-            { index: 1, text: 'Varyn said, his voice low. "For now, let\'s focus on the road," he added. It spoke volumes about the depth of their bond.' },
-            { index: 2, text: 'Mira said, her voice low. "For now, let\'s focus on the road," she said. It spoke volumes about the depth of their trust.' },
-        ]).map((c) => c.key);
-        expect(keys).toEqual(['it spoke volumes about the depth']);
-        expect(keys.some((k) => k.includes('said their voice'))).toBe(false);
-        expect(keys.some((k) => k.includes('focus on the road'))).toBe(false);
-        expect(keys.some((k) => k.endsWith(' their') || k.endsWith(' of'))).toBe(false);
-        expect(usesPhrase('"A wry smile tugged at his lips," she joked.', 'a wry smile tugged at their lips')).toBe(false);
-    });
-
-    it('takes the model\'s answer in a loose shape - no ref, or plain strings', () => {
-        const candidates = findCandidates(replies);
-        expect(parseTicAnswer(['his tone turned serious', { phrase: 'a wry smile tugged at her lips' }, 'invented phrase'], candidates).map((t) => t.key))
-            .toEqual(['their tone turned serious', 'a wry smile tugged at their lips']);
-    });
-
-    it('takes the model\'s judgement only for candidates it was given', () => {
-        const candidates = findCandidates(replies);
-        expect(parseTicAnswer([
-            { ref: '[p1]', phrase: 'a wry smile tugged at his lips.' },
-            { ref: 'p2', phrase: 'something else entirely' },
-            { ref: 'p9', phrase: 'invented' },
-        ], candidates)).toEqual([
-            { key: 'a wry smile tugged at their lips', phrase: 'a wry smile tugged at his lips' },
-            { key: 'their tone turned serious', phrase: 'His tone turned serious' },
-        ]);
+        const spoken = keys(findCandidates([
+            { index: 1, text: 'Varyn said, his voice low. It spoke volumes about the depth of their bond.' },
+            { index: 2, text: 'Mira said, her voice low. It spoke volumes about the depth of their trust.' },
+        ]));
+        expect(spoken).toEqual([phraseKey('it spoke volumes about the depth')]);
     });
 });
 
 describe('following tics', () => {
-    const now = '2026-10-14T12:00:00.000Z';
-    const found = [{ key: 'their tone turned serious', phrase: 'his tone turned serious' }];
+    const now = '2026-10-15T12:00:00.000Z';
+    const tone = { key: phraseKey('his tone turned serious'), text: 'his tone turned serious', replies: [5, 7] };
 
-    it('starts a found tic at 1, raises it when a reply uses it again, and fades it after quiet replies', () => {
-        let tics = addFound([], found, { now, counter: 4 });
-        expect(tics).toEqual([{ phrase: 'his tone turned serious', key: 'their tone turned serious', count: 1, last_used: now, seen_at: 4, decay_from: 4 }]);
-        expect(addFound(tics, found, { now, counter: 9 })).toEqual(tics);
-        tics = updateForReply(tics, 'Her tone turned serious again.', { now, counter: 5, fadeAfter: 3 });
-        expect(tics[0].count).toBe(2);
-        expect(activeTics(tics).map((t) => t.phrase)).toEqual(['his tone turned serious']);
-        tics = updateForReply(tics, 'Nothing.', { now, counter: 7, fadeAfter: 3 });
-        expect(tics[0].count).toBe(2);
-        tics = updateForReply(tics, 'Nothing.', { now, counter: 8, fadeAfter: 3 });
-        expect(tics[0]).toMatchObject({ count: 1, decay_from: 8 });
+    it('flags a found tic at once, fades it to dormant without dropping it, and flags it again the moment it returns', () => {
+        let tics = addFound([], [tone], { now, counter: 4 });
+        expect(tics).toEqual([{ phrase: 'his tone turned serious', key: tone.key, count: WARN_AT, last_used: now, seen_at: 4, decay_from: 4 }]);
+        expect(activeTics(tics)).toHaveLength(1);
+        for (const counter of [7, 10]) tics = updateForReply(tics, 'Nothing.', { now, counter, fadeAfter: 3 });
+        expect(tics[0].count).toBe(0);
         expect(activeTics(tics)).toEqual([]);
-        expect(updateForReply(tics, 'Nothing.', { now, counter: 11, fadeAfter: 3 })).toEqual([]);
+        tics = updateForReply(tics, 'Nothing.', { now, counter: 20, fadeAfter: 3 });
+        expect(tics).toHaveLength(1);
+        tics = updateForReply(tics, 'Her tone turned serious again.', { now, counter: 21, fadeAfter: 3 });
+        expect(tics[0]).toMatchObject({ count: WARN_AT, seen_at: 21 });
+        tics = updateForReply(tics, 'His tone turned serious.', { now, counter: 22, fadeAfter: 3 });
+        expect(tics[0].count).toBe(WARN_AT + 1);
+        // Found again by a compile: flagged, never lowered.
+        expect(addFound(tics, [tone], { now, counter: 23 })[0].count).toBe(WARN_AT + 1);
+    });
+
+    it('flags a watched phrase on its first use', () => {
+        const watch = [watchEntry('cupped his cheek')];
+        expect(updateForReply([], 'Plain words.', { now, counter: 1, fadeAfter: 3, watch })).toEqual([]);
+        const tics = updateForReply([], 'She cupped Remus\'s cheek.', { now, counter: 2, fadeAfter: 3, watch });
+        expect(tics).toEqual([{ phrase: 'cupped his cheek', key: 'cup their cheek', count: WARN_AT, last_used: now, seen_at: 2, decay_from: 2 }]);
+    });
+
+    it('keeps at most MAX_TRACKED, letting the dormant ones longest unused go first', () => {
+        const tics = Array.from({ length: MAX_TRACKED + 2 }, (_, i) => ({ key: `k${i}`, count: i < 3 ? 0 : 1, last_used: `2026-10-${String(10 + i % 10).padStart(2, '0')}` }));
+        const kept = prune(tics);
+        expect(kept).toHaveLength(MAX_TRACKED);
+        expect(kept.map((t) => t.key)).not.toContain('k0');
+        expect(kept.map((t) => t.key)).not.toContain('k1');
+        expect(kept.map((t) => t.key)).toContain('k2');
     });
 
     it('asks for variety in a block with no apostrophes, only while a tic is in use', () => {
@@ -120,58 +137,93 @@ describe('following tics', () => {
 
 describe('in a chat', () => {
     let fake;
+    const reply = (mes, sendDate, model = 'stheno-8b') => ({ name: 'GM', mes, send_date: sendDate, extra: { model } });
     beforeEach(async () => {
         fake = resetFakeStateEngine();
         Object.assign(getSettings(), { enabled: true, compileWorld: false, phraseTicFadeAfter: 2 });
-        getContext().chat = [{ name: 'User', is_user: true, mes: 'hi', send_date: 'd0' }, ...replies.map((r) => ({ name: 'GM', mes: r.text, send_date: `d${r.index}` }))];
+        delete getSettings().phraseTicWatch;
+        delete getSettings().phraseTicIgnored;
+        getContext().chat = [{ name: 'User', is_user: true, mes: 'hi', send_date: 'd0' }, ...replies.map((r) => reply(r.text, `d${r.index}`))];
         await loadCurrentChat();
         await addMemoryRecords(getCurrentChatRef(), [{ text: 'Kael smiled', source_message_id: 'Chat A#1@d1' }]);
+        fake.respond = async () => ({ archivist__compiled_facts: [{ text: 'Kael smiles a lot.', entities: ['Kael'], sources: ['m1'] }] });
     });
 
-    it('the compiler finds them; each new reply counts and fades them; the user can forget one', async () => {
-        let context = '';
-        fake.respond = async (text) => {
-            context ||= text;
-            return {
-                archivist__compiled_facts: [{ text: 'Kael smiles a lot.', sources: ['m1'] }],
-                archivist__compiled_phrase_tics: [{ ref: 'p1', phrase: 'a wry smile tugged at his lips' }],
-            };
-        };
+    it('a compile flags what repeats and puts it on the model\'s watch list; replies fade it and flag it again', async () => {
         await compileOpenChat();
-        expect(getChatPhraseTics().map((t) => [t.phrase, t.count])).toEqual([['a wry smile tugged at his lips', 1]]);
-        expect(getPhraseTics('Chat A')).toEqual([{ phrase: 'a wry smile tugged at his lips', count: 1, last_used: expect.any(String) }]);
+        expect(getChatPhraseTics().map((t) => [t.phrase, t.count])).toEqual([
+            ['A wry smile tugged at his lips', 2], ['We are in this together', 2], ['His tone turned serious', 2],
+        ]);
+        expect(getPhraseTics('Chat A')).toHaveLength(3);
+        expect(currentModel()).toBe('stheno-8b');
+        expect(getWatchList('stheno-8b').map((w) => w.phrase)).toEqual(expect.arrayContaining(['cupped his cheek', 'We are in this together']));
+        // Another model's list is untouched.
+        expect(getWatchList('other-model').map((w) => w.phrase)).not.toContain('We are in this together');
 
-        getContext().chat.push({ name: 'GM', mes: 'A wry smile tugged at his lips once more.', send_date: 'd9' });
-        countNewestReply();
-        countNewestReply(); // the same reply counts once
-        expect(getChatPhraseTics()[0].count).toBe(2);
-
-        for (const n of [10, 11, 12, 13]) {
-            getContext().chat.push({ name: 'GM', mes: 'Plain words.', send_date: `d${n}` });
+        for (const n of [10, 11, 12, 13, 14, 15, 16, 17]) {
+            getContext().chat.push(reply('Plain words.', `d${n}`));
             countNewestReply();
         }
-        expect(getChatPhraseTics()).toEqual([]);
+        expect(getChatPhraseTics().every((t) => t.count === 0)).toBe(true);
+        expect(getChatPhraseTics()).toHaveLength(3);
 
-        await compileOpenChat({ rebuild: true });
-        expect(getChatPhraseTics()).toHaveLength(1);
-        removePhraseTic(chatKeyFor(getCurrentChatRef()), getChatPhraseTics()[0].key);
-        expect(getChatPhraseTics()).toEqual([]);
-        expect(context).toContain('[p1] "A wry smile tugged at his lips" - in 2 replies');
+        getContext().chat.push(reply('"We are in this together," Mira whispered.', 'd20'));
+        countNewestReply();
+        countNewestReply(); // the same reply counts once
+        expect(getChatPhraseTics().find((t) => t.phrase === 'We are in this together').count).toBe(WARN_AT);
     });
 
-    it('drops tics the older rules found', () => {
+    it('flags a phrase on the writing model\'s watch list at its first use - not another model\'s', () => {
+        getContext().chat.push(reply('Varyn cupped Remus\'s cheek.', 'd9', 'other-model'));
+        countNewestReply();
+        expect(getChatPhraseTics().map((t) => t.phrase)).toEqual(['cupped his cheek']);
+
+        // A phrase on one model's list only.
+        setWatchText(`${getWatchText('stheno-8b')}\nhis jaw tightened`, 'stheno-8b');
+        getContext().chat.push(reply('Her jaw tightened.', 'd10', 'third-model'));
+        countNewestReply();
+        expect(getChatPhraseTics().map((t) => t.phrase)).not.toContain('his jaw tightened');
+        getContext().chat.push(reply('Her jaw tightened.', 'd11', 'stheno-8b'));
+        countNewestReply();
+        expect(getChatPhraseTics().find((t) => t.phrase === 'his jaw tightened').count).toBe(WARN_AT);
+
+        // Taken off one model's list: ignored everywhere.
+        setWatchText(getWatchText('stheno-8b').replace('cupped his cheek\n', ''), 'stheno-8b');
+        getContext().chat.push(reply('She cupped his cheek.', 'd12', 'third-model'));
+        countNewestReply();
+        expect(getChatPhraseTics().find((t) => t.phrase === 'cupped his cheek')).toBeUndefined();
+    });
+
+    it('the user can stop tracking a tic - in every chat and list, for good - and put it back', async () => {
+        await compileOpenChat();
+        const key = getChatPhraseTics().find((t) => t.phrase === 'We are in this together').key;
+        removePhraseTic(chatKeyFor(getCurrentChatRef()), key);
+        expect(getChatPhraseTics().map((t) => t.key)).not.toContain(key);
+        expect(getWatchText('stheno-8b')).not.toContain('We are in this together');
+        await compileOpenChat({ rebuild: true });
+        expect(getChatPhraseTics().map((t) => t.key)).not.toContain(key);
+
+        setWatchText(`${getWatchText('stheno-8b')}\nWe are in this together`, 'stheno-8b');
+        getContext().chat.push(reply('"We are in this together."', 'd30'));
+        countNewestReply();
+        // Caught again - by the default "in this together", or the phrase put back.
+        expect(getChatPhraseTics().some((t) => key.includes(t.key) && t.count >= WARN_AT)).toBe(true);
+    });
+
+    it('drops tics the older rules found, and knows no model before a reply', () => {
         const entry = getSettings().chats[chatKeyFor(getCurrentChatRef())];
-        entry.phraseTics = { tics: [{ phrase: 'said his voice', key: 'said their voice', count: 1 }], counter: 3, lastReply: null };
+        entry.phraseTics = { rules: 2, tics: [{ phrase: 'said his voice', key: 'said their voice', count: 1 }], counter: 3, lastReply: null };
         expect(getChatPhraseTics()).toEqual([]);
+        getContext().chat = [{ name: 'User', is_user: true, mes: 'hi', send_date: 'd0' }];
+        expect(currentModel()).toBe(UNKNOWN_MODEL);
     });
 
     it('does nothing while tracking is off', async () => {
         getSettings().trackPhraseTics = false;
-        fake.respond = async () => ({
-            archivist__compiled_facts: [{ text: 'x', sources: ['m1'] }],
-            archivist__compiled_phrase_tics: [{ ref: 'p1', phrase: 'a wry smile tugged at his lips' }],
-        });
         await compileOpenChat();
+        getContext().chat.push(reply('Varyn cupped his cheek.', 'd9'));
+        countNewestReply();
         expect(getChatPhraseTics()).toEqual([]);
+        getSettings().trackPhraseTics = true;
     });
 });

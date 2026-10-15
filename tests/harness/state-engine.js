@@ -83,6 +83,10 @@ export function createFakeStateEngine() {
             Object.assign(def, patch, { name: def.name });
             return def;
         },
+        deleteVariable(extensionId, instanceId, ref) {
+            log('deleteVariable', [ref]);
+            return preset(ref.namespace, ref.presetName)?.variables.delete(qualified(ref)) ?? false;
+        },
         getVariableValue(extensionId, instanceId, chatId, name) {
             const key = `${chatId}|${name}`;
             return values.has(key) ? { value: structuredClone(values.get(key)), def: null } : undefined;

@@ -316,9 +316,12 @@ if (forward) showBadge(`${forward.type} · ${forward.polarity_label} · ${forwar
 
 ### `getPhraseTics(chat_id?)` -> `[{ phrase, count, last_used }]`
 
-The chat's phrase tics - stock phrases the narration has been repeating
-(see the user guide, *Phrase tics*). `count` 2 or more means in use right
-now; `last_used` is an ISO time. `[]` when there are none.
+The chat's phrase tics - stock wording the AI has been repeating, in
+narration or dialogue (see the user guide, *Phrase tics*). `count` 2 or more
+means in use right now; 0 means resting - kept, and flagged again the moment
+a reply uses it. `last_used` is an ISO time. `[]` when there are none. Each
+model also has a watch list of phrases it is known to overuse, flagged on
+their first use in any chat it writes.
 `PHRASE_TICS_CHANGED_EVENT` (payload `{ chatId, chatKey }`) follows each
 change. Archivist already offers a Curator block for them; Scenario Builder
 can read them to shape its own directions.

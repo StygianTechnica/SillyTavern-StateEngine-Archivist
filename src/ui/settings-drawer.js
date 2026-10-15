@@ -15,6 +15,7 @@ import { startCatchUp, cancelCatchUp, getCatchUpProgress, onCatchUpProgress, isC
 import { listConnectionProfiles } from './connection-profiles.js';
 import { openMemoryBrowser } from './memory-browser.js';
 import { compileOpenChat, getCompilerStatus, onCompilerStatus, getCompiledMemory, isCompiling, COMPILED_CHANGED_EVENT } from '../compiler/compiler.js';
+import { getWatchText, setWatchText, currentModel, PHRASE_TICS_CHANGED_EVENT } from '../compiler/phrase-tic-tracker.js';
 
 // SillyTavern resolves extension templates relative to
 // public/scripts/extensions/, i.e. "third-party/<folder name>". Derived
@@ -170,6 +171,27 @@ function wireCompiler() {
         saveSettings();
     });
     bindNumber('ar_phrase_tic_fade', 'phraseTicFadeAfter', 1, 200);
+    // The watch list of the model behind the open chat's latest reply. The
+    // one being edited is remembered, so a reply by another model meanwhile
+    // can't move the edit to its list; refreshed when tics change (a compile
+    // adds what it found) or the chat does - never while being typed in.
+    const watch = byId('ar_phrase_tic_watch');
+    const watchModel = byId('ar_phrase_tic_model');
+    let editing = null;
+    const showWatch = () => {
+        if (document.activeElement === watch) return;
+        editing = currentModel();
+        watchModel.textContent = editing;
+        watch.value = getWatchText(editing);
+    };
+    showWatch();
+    watch.addEventListener('change', () => {
+        setWatchText(watch.value, editing);
+        watch.value = getWatchText(editing);
+    });
+    const { eventSource: events, eventTypes: types } = SillyTavern.getContext();
+    events.on(PHRASE_TICS_CHANGED_EVENT, showWatch);
+    if (types.CHAT_CHANGED) events.on(types.CHAT_CHANGED, showWatch);
     bindNumber('ar_compile_threshold', 'compileThreshold', 1, 200);
     bindNumber('ar_compile_interval', 'compileIntervalMinutes', 1, 1440);
     bindNumber('ar_compile_gap', 'compileMinGapMinutes', 0, 1440);

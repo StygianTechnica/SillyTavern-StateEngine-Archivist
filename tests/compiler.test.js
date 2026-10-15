@@ -135,6 +135,11 @@ describe('planning and parsing', () => {
         }]);
     });
 
+    it('reads character lists written as plain text, without filler for an empty one', () => {
+        const [lucian] = parseCharacters([{ name: 'Lucian', traits: 'curious, introspective', habits: 'none mentioned', stressors: ['N/A'], motivations: 'Not known.' }], options);
+        expect(lucian).toMatchObject({ traits: ['curious', 'introspective'], habits: [], stressors: [], motivations: [] });
+    });
+
     it('parses threads with status and progress, keeping ids, and links a quest object by its title', () => {
         const questResolve = (name) => (name === 'The gym job' ? { id: 'qst_gym', name, type: 'quest' } : resolve(name));
         const threads = parseThreads([
@@ -590,7 +595,7 @@ describe('compiling through the independent preset', () => {
         expect(preset.independentPreset).toBe(true);
         expect(preset.independentConfig.promptedHeader).toBe(COMPILER_HEADER);
         expect([...preset.variables.keys()]).toEqual([
-            'archivist__compiled_facts', 'archivist__compiled_relationships', 'archivist__compiled_characters', 'archivist__compiled_story_summary', 'archivist__compiled_scene_summary', 'archivist__compiled_phrase_tics',
+            'archivist__compiled_facts', 'archivist__compiled_relationships', 'archivist__compiled_characters', 'archivist__compiled_story_summary', 'archivist__compiled_scene_summary',
             'archivist__compiled_tension',
         ]);
         expect(preset.variables.get('archivist__compiled_story_summary')).toMatchObject({ type: 'string', prompted: { newEachTurn: true } });

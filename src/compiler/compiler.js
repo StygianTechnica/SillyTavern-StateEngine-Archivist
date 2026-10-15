@@ -8,7 +8,7 @@
 // Engine presets, on the compiler's own connection - like catch-up:
 //
 //   "Archivist Memory Compiler"  facts, relationships, character insights,
-//                                the summaries, phrase tics, story tension
+//                                the summaries, story tension
 //   "Archivist World Compiler"   story threads, the world
 //
 // Two presets, so each answer stays a manageable size and each prompt shows
@@ -31,11 +31,10 @@
 import { LOG_PREFIX } from '../constants.js';
 import { getSettings, saveSettings } from '../settings.js';
 import { findPreset } from '../api/presets.js';
-import { getVariable, createVariable, updateVariable, getVariableValue, setVariableValue } from '../api/variables.js';
+import { getVariable, createVariable, updateVariable, deleteVariable, getVariableValue, setVariableValue } from '../api/variables.js';
 import { createIndependentPreset, configureIndependentPreset, updateIndependentPresetContext } from '../api/independent-presets.js';
 import { listObjectTypeIds, getObjectByAlias, getObject, listObjects } from '../api/objects.js';
 import { objectNameIndex, relinkCompiled, aliasSuggestions, baseName, mergeQualifiedNames } from './entity-link.js';
-import { candidateLines, parseTicAnswer } from './phrase-tics.js';
 import { currentCandidates, recordFoundTics } from './phrase-tic-tracker.js';
 import { getAllMemories, MEMORIES_CHANGED_EVENT } from '../memory/archivist.js';
 import { getCurrentChatRef, chatKeyFor, getChatEntry, findChatEntriesById, updateChatEntry, compiledFileFor } from '../memory/registry.js';
@@ -55,7 +54,6 @@ export const RELATIONSHIPS_VARIABLE = 'compiled_relationships';
 export const CHARACTERS_VARIABLE = 'compiled_characters';
 export const STORY_SUMMARY_VARIABLE = 'compiled_story_summary';
 export const SCENE_SUMMARY_VARIABLE = 'compiled_scene_summary';
-export const PHRASE_TICS_VARIABLE = 'compiled_phrase_tics';
 export const TENSION_VARIABLE = 'compiled_tension';
 export const THREADS_VARIABLE = 'compiled_threads';
 export const WORLD_VARIABLE = 'compiled_world';
@@ -74,7 +72,14 @@ export const WORLD_VARIABLE = 'compiled_world';
 // 8: phrase tics: stock description only.
 // 9: plan steps on threads; story tension.
 // 10: relationship polarity judged afresh, agreeing with type and text.
-export const COMPILER_VARIABLE_VERSION = 10;
+// 11: phrase tics found in code - the model's list removed.
+export const COMPILER_VARIABLE_VERSION = 11;
+
+// Variables an older version had, deleted when the version moves on:
+// [preset, variable].
+const OBSOLETE_VARIABLES = Object.freeze([
+    [COMPILER_PRESET, 'compiled_phrase_tics'],
+]);
 
 // New memories per compile run. Small, so a Rebuild revises relationships
 // and threads often - a small model mostly keeps what a batch hands it, and
@@ -195,13 +200,6 @@ const TENSION_INSTRUCTIONS = [
     `0 is none - a calm, settled, safe moment; ${TENSION_MAX} is the most the story could hold - a climax. Judge each on its own, on the same scale as the "Story tension so far", and let it fall as well as rise: a quiet scene after a fight is low.`,
 ].join(' ');
 
-const PHRASE_TICS_INSTRUCTIONS = [
-    'The narration\'s phrase tics: from the "Repeated phrases in the latest replies" (each with a ref like [p2] and an example), the ones that are stock DESCRIPTION - how someone looks, moves, sounds or feels, written the same way again and again:',
-    'a facial expression or gesture ("a wry smile", "a smile playing on his lips", "raised an eyebrow"), a look ("shot him a sidelong glance", "her gaze never leaving his face"), a voice ("his voice low and steady"), a stock emotion or sensation ("a hint of mischief", "warmth spreading through his chest"), a stock physical detail ("her emerald eyes").',
-    'Do NOT pick: what the story has to name again (a place, a group, a title, an object), a plot fact, an ordinary action that repeats only because it happened twice (sitting down, opening a door), or a fragment that is not a phrase on its own. When unsure, leave it out.',
-    'Each item is an object: {"ref": its [p...] ref; "phrase": the tic as written, trimmed to the stock wording itself}. [] when none qualifies, or none are listed.',
-].join(' ');
-
 // A prompted text answer (the summaries), read and cleared like the lists.
 function summaryDef(instructions, label) {
     return {
@@ -242,7 +240,6 @@ const PRESETS = [
             [CHARACTERS_VARIABLE, () => variableDef(CHARACTERS_INSTRUCTIONS, 'Compiled character insights', { name: { type: 'string' } })],
             [STORY_SUMMARY_VARIABLE, () => summaryDef(STORY_SUMMARY_INSTRUCTIONS, 'Compiled story summary')],
             [SCENE_SUMMARY_VARIABLE, () => summaryDef(SCENE_SUMMARY_INSTRUCTIONS, 'Compiled scene summary')],
-            [PHRASE_TICS_VARIABLE, () => variableDef(PHRASE_TICS_INSTRUCTIONS, 'Compiled phrase tics', { ref: { type: 'string' }, phrase: { type: 'string' } })],
             [TENSION_VARIABLE, () => variableDef(TENSION_INSTRUCTIONS, 'Compiled story tension', { reason: { type: 'string' } })],
         ],
     },
@@ -279,6 +276,7 @@ export async function ensureCompilerPreset() {
         }
     }
     if (outdated) {
+        for (const [presetName, name] of OBSOLETE_VARIABLES) if (await getVariable(presetName, name)) await deleteVariable(presetName, name);
         settings.compilerVariableVersion = COMPILER_VARIABLE_VERSION;
         saveSettings();
     }
@@ -481,6 +479,19 @@ async function runPart(presetName, variables, context, chatId) {
     return answers;
 }
 
+// Every name the compiled state knows - characters, places, groups,
+// things: the story's own words, never a phrase tic.
+function compiledNames(compiled) {
+    const names = [];
+    const add = (e) => { if (e?.name) names.push(e.name); };
+    for (const f of compiled.facts ?? []) (f.entities ?? []).forEach(add);
+    for (const r of compiled.relationships ?? []) { add(r.from); add(r.to); }
+    for (const c of compiled.characters ?? []) add(c.entity);
+    for (const t of compiled.threads ?? []) (t.involved ?? []).forEach(add);
+    for (const w of compiled.world ?? []) { if (w.name) names.push(w.name); (w.involved ?? []).forEach(add); }
+    return names;
+}
+
 async function compileRun(ref, { rebuild }) {
     const settings = getSettings();
     const chatKey = chatKeyFor(ref);
@@ -512,18 +523,12 @@ async function compileRun(ref, { rebuild }) {
     for (let i = 0; i < added.length; i += COMPILE_BATCH) batches.push(added.slice(i, i + COMPILE_BATCH));
     if (batches.length === 0) batches.push([]);
     setStatus({ batches: batches.length });
-    // Phrase tics: the latest replies' repeated wording, judged once - with
-    // the last batch, the one nearest to them.
-    const candidates = currentCandidates();
-
     for (let b = 0; b < batches.length; b++) {
         setStatus({ batch: b + 1, part: 'memory' });
         const batch = batches[b];
         const refs = refsFor(batch);
-        const last = b === batches.length - 1;
-        const memory = await runPart(COMPILER_PRESET, [FACTS_VARIABLE, RELATIONSHIPS_VARIABLE, CHARACTERS_VARIABLE, STORY_SUMMARY_VARIABLE, SCENE_SUMMARY_VARIABLE, PHRASE_TICS_VARIABLE, TENSION_VARIABLE],
-            compileContext(compiled, batch, nameOf, candidateLines(last ? candidates : [])), ref.chatId);
-        if (last) recordFoundTics(chatKey, parseTicAnswer(memory[PHRASE_TICS_VARIABLE], candidates));
+        const memory = await runPart(COMPILER_PRESET, [FACTS_VARIABLE, RELATIONSHIPS_VARIABLE, CHARACTERS_VARIABLE, STORY_SUMMARY_VARIABLE, SCENE_SUMMARY_VARIABLE, TENSION_VARIABLE],
+            compileContext(compiled, batch, nameOf), ref.chatId);
         let world = { [THREADS_VARIABLE]: [], [WORLD_VARIABLE]: [] };
         if (withWorld) {
             setStatus({ part: 'world' });
@@ -557,6 +562,9 @@ async function compileRun(ref, { rebuild }) {
         await writeCompiled(chatKey, compiled);
         if (chatKey === openKey()) openCache = { chatKey, compiled };
     }
+    // Phrase tics: the latest replies' repeated wording, once the story's
+    // own names are known.
+    recordFoundTics(chatKey, currentCandidates(compiledNames(compiled)));
     return 'compiled';
 }
 

@@ -380,7 +380,10 @@ export function parseRelationships(rawRelationships, { previous, refs, resolve }
     return carriedForward(relationships, previous.relationships, relKey);
 }
 
-const phraseList = (value) => names(value).map((p) => p.replace(/\.$/, ''));
+// A list's phrases, without what a model writes for an empty one ("none
+// mentioned", "n/a").
+const NOTHING = /^(none|nothing|n\/?a|unknown|not (yet )?(mentioned|known|shown|stated)|none (mentioned|known|shown|yet)|-+)$/i;
+const phraseList = (value) => names(value).map((p) => p.replace(/\.$/, '').trim()).filter((p) => p && !NOTHING.test(p));
 
 // Character insights, one per entity.
 export function parseCharacters(rawCharacters, { previous, refs, resolve }) {

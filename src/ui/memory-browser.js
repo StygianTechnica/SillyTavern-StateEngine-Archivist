@@ -591,7 +591,7 @@ function renderCompiled() {
         section('Story threads and quests', view.threads.map(threadRow), 'No plot hooks, open threads or quests yet.'),
         ...worldSections,
         section('Timeline', view.timeline.map(timelineRow), 'No events yet.'),
-        section('Phrase tics', state.tics.map(ticRow), 'No repeated stock phrases found in the narration lately.'),
+        section('Phrase tics', [...state.tics].sort((a, b) => b.count - a.count || String(b.last_used).localeCompare(String(a.last_used))).map(ticRow), 'No repeated stock phrases found in this chat yet.'),
     );
 }
 
@@ -601,17 +601,17 @@ function ticRow(tic) {
     const inUse = tic.count >= WARN_AT;
     const row = el('div', `ar-mb-fact${inUse ? '' : ' ar-mb-settled'}`);
     const meta = el('div', 'ar-mb-record-meta');
-    meta.append(el('span', 'ar-mb-status', inUse ? 'In use' : 'Watching'), el('span', '', `count ${tic.count}`));
+    meta.append(el('span', 'ar-mb-status', inUse ? 'In use' : (tic.count > 0 ? 'Fading' : 'Resting')), el('span', '', `count ${tic.count}`));
     if (tic.last_used) meta.append(el('span', '', `last seen ${shortDate(tic.last_used)}`));
     const remove = el('button', 'menu_button fa-solid fa-trash-can ar-mb-item-button');
     remove.type = 'button';
-    remove.title = 'Forget this phrase tic (the compiler may find it again if it keeps coming back)';
+    remove.title = 'Stop tracking this phrase - in every chat, for good (put it back on the drawer\'s watch list to undo)';
     remove.dataset.mbTic = tic.key;
     const buttons = el('span', 'ar-mb-item-buttons');
     buttons.append(remove);
     meta.append(buttons);
     row.append(meta, el('div', 'ar-mb-record-text', tic.phrase));
-    row.title = inUse ? 'The Curator block Phrase tics to vary asks the model to word this differently for now.' : 'Seen repeated; asked about only if it keeps coming back.';
+    row.title = inUse ? 'The Curator block Phrase tics to vary asks the model to word this differently for now.' : 'Kept: flagged again the moment a reply uses it.';
     return row;
 }
 

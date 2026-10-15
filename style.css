@@ -605,3 +605,8 @@
     display: flex;
     justify-content: space-between;
 }
+
+#archivist_settings .ar-watch textarea {
+    resize: vertical;
+    min-height: 5em;
+}

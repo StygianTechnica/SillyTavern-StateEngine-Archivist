@@ -31,6 +31,12 @@ export async function updateVariable(presetName, variableName, patch) {
     return stateEngine.updateVariable(EXTENSION_ID, instanceId, ref(presetName, variableName), patch);
 }
 
+// Removes the definition and its stored values everywhere.
+export async function deleteVariable(presetName, variableName) {
+    const { stateEngine, instanceId } = await getStateEngine();
+    return stateEngine.deleteVariable(EXTENSION_ID, instanceId, ref(presetName, variableName));
+}
+
 // The variable's value in a chat, or undefined if the chat holds none.
 export async function getVariableValue(chatId, variableName) {
     const { stateEngine, instanceId } = await getStateEngine();
