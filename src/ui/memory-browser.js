@@ -33,7 +33,8 @@ import { findViewItem, editValues, buildEditForm, itemButtons } from './compiled
 import { getChatPhraseTics, removePhraseTic, PHRASE_TICS_CHANGED_EVENT } from '../compiler/phrase-tic-tracker.js';
 import { WARN_AT } from '../compiler/phrase-tics.js';
 import { currentStep, TENSION_AXES, TENSION_MAX } from '../compiler/compiled-schema.js';
-import { compilerLine } from './drawer-model.js';
+import { compilerLine, rebuildLine } from './drawer-model.js';
+import { startCatchUp, cancelCatchUp, getCatchUpProgress, onCatchUpProgress, isCatchUpRunning, hasUnfinishedRebuild } from '../extraction/catch-up.js';
 import { jumpToMessage } from './chat-jump.js';
 
 const EMPTY_FILTERS = Object.freeze({ search: '', subtype: '', scope: '', importance: '', entity: '', tag: '' });
@@ -231,6 +232,60 @@ function renderRecords() {
     list.replaceChildren(...(shown.length
         ? shown.map(recordRow)
         : [el('div', 'ar-mb-empty', state.records.length ? 'No memories match these filters.' : 'This chat has no memories stored.')]));
+    renderRebuild();
+}
+
+// ---- rebuilding the memories from the chat
+
+// The Rebuild memories button and its progress line: for the open chat only
+// (its messages are what is read); Stop while it runs; Continue after one
+// was stopped.
+function renderRebuild() {
+    const button = part('rebuildMemories');
+    const line = part('rebuildStatus');
+    if (!button || !line) return;
+    const progress = getCatchUpProgress();
+    const isOpen = !!state.selectedKey && state.selectedKey === openChatKey();
+    const rebuilding = progress?.running && progress.rebuild;
+    const label = button.querySelector('span');
+    if (rebuilding) {
+        label.textContent = progress.cancelling ? 'Stopping...' : 'Stop rebuilding';
+        button.disabled = !!progress.cancelling;
+        button.title = 'Stop after the chunk in progress - the rest keep their old memories';
+    } else {
+        label.textContent = isOpen && hasUnfinishedRebuild(state.selectedKey) ? 'Continue rebuilding memories' : 'Rebuild memories from chat';
+        button.disabled = !isOpen || isCatchUpRunning();
+        button.title = !isOpen ? 'Open this chat to rebuild its memories from its messages'
+            : isCatchUpRunning() ? 'Catch-up is running - wait for it to finish'
+                : 'Read every message of this chat again, in chunks, and replace its memories with what the current extraction finds - then recompile';
+    }
+    const showLine = progress?.rebuild && progress.chatKey === state.selectedKey;
+    const { text, error } = showLine ? rebuildLine(progress, openChatKey()) : { text: '', error: false };
+    line.textContent = text;
+    line.classList.toggle('ar-mb-error', error);
+}
+
+async function rebuildMemories() {
+    const progress = getCatchUpProgress();
+    if (progress?.running && progress.rebuild) {
+        cancelCatchUp();
+        renderRebuild();
+        return;
+    }
+    const entry = getChatEntry(state.selectedKey);
+    if (!entry || state.selectedKey !== openChatKey()) return;
+    const messages = (SillyTavern.getContext().chat ?? []).filter((m) => !m?.is_system && String(m?.mes ?? '').trim()).length;
+    const question = hasUnfinishedRebuild(state.selectedKey)
+        ? `Continue rebuilding the memories of "${entry.chatId}" from where it stopped?`
+        : [
+            `Rebuild the memories of "${entry.chatId}" from its ${messages} messages?`,
+            'Every message is read again with the current extraction, in chunks, through the catch-up preset - this takes a while, and you can keep chatting meanwhile.',
+            'Each chunk\'s new memories replace that chunk\'s old ones; a chunk that fails, or that you stop before, keeps its old ones. Memories you deleted may come back.',
+            'When it is done, the compiled memory is rebuilt from the new memories (story threads you wrote are kept).',
+        ].join('\n\n');
+    if (!await confirmAction(question)) return;
+    if (!await startCatchUp({ rebuild: true })) toastr.info('Catch-up is already running, or this chat is not open.', 'Archivist');
+    renderRebuild();
 }
 
 // ---- the compiled view
@@ -904,6 +959,10 @@ function onClick(e) {
         void deleteSelectedChat();
         return;
     }
+    if (e.target.closest('[data-mb="rebuildMemories"]')) {
+        void rebuildMemories();
+        return;
+    }
     if (e.target.closest('[data-mb="refresh"]')) void loadChats();
 }
 
@@ -965,6 +1024,8 @@ function build() {
                         <button type="button" class="menu_button menu_button_icon" data-mb="selectShown" title="Select (or unselect) every memory the filters show"><i class="fa-solid fa-check-double"></i><span>Select shown</span></button>
                         <button type="button" class="menu_button menu_button_icon" data-mb="deleteSelected"><i class="fa-solid fa-trash-can"></i><span>Delete selected</span></button>
                         <button type="button" class="menu_button menu_button_icon ar-mb-danger" data-mb="deleteChat" title="Delete every memory stored for this chat"><i class="fa-solid fa-dumpster"></i><span>Delete all for this chat</span></button>
+                        <button type="button" class="menu_button menu_button_icon" data-mb="rebuildMemories"><i class="fa-solid fa-book-open-reader"></i><span>Rebuild memories from chat</span></button>
+                        <small class="ar-mb-rebuild-status" data-mb="rebuildStatus"></small>
                     </div>
                 </div>
             </div>
@@ -1002,6 +1063,9 @@ function build() {
     // The compiled view shows what the compiler is doing as it does it.
     onCompilerStatus(() => {
         if (state.open && state.view === 'compiled' && !state.editing) render();
+    });
+    onCatchUpProgress(() => {
+        if (state.open) renderRebuild();
     });
 }
 

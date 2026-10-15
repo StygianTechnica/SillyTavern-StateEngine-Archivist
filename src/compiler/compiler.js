@@ -36,10 +36,12 @@ import { createIndependentPreset, configureIndependentPreset, updateIndependentP
 import { listObjectTypeIds, getObjectByAlias, getObject, listObjects } from '../api/objects.js';
 import { objectNameIndex, relinkCompiled, aliasSuggestions, baseName, mergeQualifiedNames } from './entity-link.js';
 import { currentCandidates, recordFoundTics } from './phrase-tic-tracker.js';
-import { getAllMemories, MEMORIES_CHANGED_EVENT } from '../memory/archivist.js';
+import { getAllMemories, linkObjectMentions, MEMORIES_CHANGED_EVENT } from '../memory/archivist.js';
+import { mentionMatcherFor } from '../memory/object-mentions.js';
 import { getCurrentChatRef, chatKeyFor, getChatEntry, findChatEntriesById, updateChatEntry, compiledFileFor } from '../memory/registry.js';
 import { readJsonFile, writeJsonFile } from '../memory/storage.js';
 import { runIndependent } from '../extraction/independent-run.js';
+import { isRebuildingMemories } from '../extraction/catch-up.js';
 import {
     EMPTY_COMPILED, COMPILED_SCHEMA, refsFor, compileContext, worldContext, parseCompileOutput, parseCharacters, parseThreads, parseWorld, parseSummary, changesSince, buildCompiledView,
     newestMessageIndex, parseTension, editCompiledItem, removeCompiledItem, editCompiledSummary, addCompiledThread,
@@ -74,7 +76,8 @@ export const WORLD_VARIABLE = 'compiled_world';
 // 10: relationship polarity judged afresh, agreeing with type and text.
 // 11: phrase tics found in code - the model's list removed.
 // 12: plan memories become plan threads.
-export const COMPILER_VARIABLE_VERSION = 12;
+// 13: tension judged on a fixed scale at a batch's most tense moment.
+export const COMPILER_VARIABLE_VERSION = 13;
 
 // Variables an older version had, deleted when the version moves on:
 // [preset, variable].
@@ -193,13 +196,16 @@ const SCENE_SUMMARY_INSTRUCTIONS = [
     'Present tense. No commentary.',
 ].join(' ');
 
+// Each level of each axis has a fixed meaning, so a reading is judged
+// against the scale - never against the readings before it, which a small
+// model only copies (it did: ten batches in a row at 2 / 3 / 4).
 const TENSION_INSTRUCTIONS = [
-    'The story\'s tension NOW - at the newest memories (the highest message numbers) - as a list with exactly one object:',
-    `{"threat": 0-${TENSION_MAX}, how much danger, conflict or hostility is in play and how high the stakes are;`,
-    `"uncertainty": 0-${TENSION_MAX}, how much is unknown, unresolved or in suspense - open questions, hidden motives, outcomes in doubt;`,
-    `"emotional": 0-${TENSION_MAX}, how much emotional strain, conflict or intensity the characters are under - fear, grief, anger, longing, confrontation;`,
-    '"reason": one short sentence on what drives the tension now}.',
-    `0 is none - a calm, settled, safe moment; ${TENSION_MAX} is the most the story could hold - a climax. Judge each on its own, on the same scale as the "Story tension so far", and let it fall as well as rise: a quiet scene after a fight is low.`,
+    'The story\'s tension at the MOST TENSE moment among the NEW memories - a fight in the middle of them counts even if things calmed down after - as a list with exactly one object:',
+    '{"threat": danger, conflict or hostility in play - 0 safe, nothing threatens; 1 a minor risk or unease; 2 danger is near or possible (rumors, a hostile place, being watched); 3 open danger or confrontation (a standoff, a chase, a threat made); 4 a fight or a life at risk; 5 a deadly climax - someone may die or all may be lost;',
+    '"uncertainty": what is unknown or in doubt - 0 everything is clear and settled; 1 small open questions; 2 a real unknown (a stranger\'s motive, a rumor, a next step unclear); 3 a mystery or a decision that matters is open; 4 the outcome of something important is in doubt; 5 everything hangs on what happens next;',
+    '"emotional": emotional strain or intensity - 0 calm, ordinary; 1 mild feelings; 2 clear feelings (worry, attraction, irritation); 3 strong feelings (fear, grief, anger, longing, a confession); 4 overwhelming feelings or a raw confrontation; 5 an emotional breaking point;',
+    '"reason": one short sentence naming that moment and what makes it tense}.',
+    'Judge each axis on its own, from these memories alone, and use the whole scale: quiet stretches are low (0-1), a fight is 4 or 5.',
 ].join(' ');
 
 // A prompted text answer (the summaries), read and cleared like the lists.
@@ -497,6 +503,8 @@ function compiledNames(compiled) {
 async function compileRun(ref, { rebuild }) {
     const settings = getSettings();
     const chatKey = chatKeyFor(ref);
+    // Objects made since the memories were stored: linked before compiling.
+    await linkObjectMentions(chatKey, await mentionMatcherFor(ref.chatId));
     const records = await getAllMemories(chatKey);
     // A rebuild starts over, but what the user deleted stays deleted and
     // the threads they wrote stay written.
@@ -740,7 +748,8 @@ export async function checkSchedule({ now = Date.now() } = {}) {
 // Archivist enabled). Never throws.
 export async function maybeCompile() {
     const settings = getSettings();
-    if (!settings.enabled || !settings.compileAuto || isCompiling()) return;
+    // A memory rebuild compiles once, at its end - not chunk by chunk.
+    if (!settings.enabled || !settings.compileAuto || isCompiling() || isRebuildingMemories()) return;
     try {
         const decision = await checkSchedule();
         if (decision.compile) await compileOpenChat({ reason: decision.reason });

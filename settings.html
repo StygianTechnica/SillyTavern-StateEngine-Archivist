@@ -45,6 +45,10 @@
                         <span>Max tokens</span>
                         <input id="ar_catchup_tokens" type="number" class="text_pole" min="300" max="16000" step="100" />
                     </label>
+                    <label class="ar-field" title="How freely catch-up's model writes - for catch-up and for rebuilding a chat's memories. Keep it low (0.2-0.4): extraction is bookkeeping, and higher values make small models break the JSON it has to answer in.">
+                        <span>Temperature</span>
+                        <input id="ar_catchup_temperature" type="number" class="text_pole" min="0" max="2" step="0.05" />
+                    </label>
                 </div>
                 <div class="ar-row">
                     <div id="ar_catchup_run" class="menu_button menu_button_icon" title="Extract memories from this chat's earlier messages">

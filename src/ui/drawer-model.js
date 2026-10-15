@@ -54,8 +54,37 @@ export function lastHarvestLine(last, enabled) {
 
 // The catch-up status line, from getCatchUpProgress()
 // (src/extraction/catch-up.js), as seen from the open chat: { text, error }.
+// A memory rebuild's line (catch-up.js startCatchUp({ rebuild: true })).
+export function rebuildLine(progress, openChatKey) {
+    if (!progress) return { text: '', error: false };
+    const many = (n) => `${n} ${n === 1 ? 'memory' : 'memories'}`;
+    const where = progress.chatKey !== openChatKey ? ` for "${progress.chatId}"` : '';
+    if (progress.running) {
+        if (progress.cancelling) return { text: `Stopping the memory rebuild after the chunk in progress${where}...`, error: false };
+        if (!progress.total) return { text: `Getting ready to rebuild the memories${where}...`, error: false };
+        const current = Math.min(progress.done + 1, progress.total);
+        return { text: `Rebuilding memories${where}: chunk ${current} of ${progress.total} - ${many(progress.stored)} so far. You can keep chatting.`, error: false };
+    }
+    switch (progress.outcome) {
+        case 'nothing':
+            return { text: `Nothing to rebuild${where} - the chat has no messages to read.`, error: false };
+        case 'cancelled':
+            return { text: `Memory rebuild stopped${where} after ${progress.done} of ${progress.total} chunks - the rest keep their old memories. Continue it any time.`, error: false };
+        case 'failed':
+            return { text: `The memory rebuild failed${where}: ${progress.lastError || 'see the browser console'}. The old memories are kept.`, error: true };
+        default: {
+            const failed = progress.failedChunks
+                ? ` ${progress.failedChunks} of ${progress.total} chunks failed (${progress.lastError}) and kept their old memories - continue to retry them.`
+                : '';
+            const compile = progress.compileStarted ? ' Recompiling them now.' : '';
+            return { text: `Memories rebuilt${where}: ${many(progress.stored)} from ${progress.messages} messages.${failed}${compile}`, error: progress.failedChunks > 0 };
+        }
+    }
+}
+
 export function catchUpLine(progress, openChatKey) {
     if (!progress) return { text: '', error: false };
+    if (progress.rebuild) return rebuildLine(progress, openChatKey);
     const many = (n) => `${n} ${n === 1 ? 'memory' : 'memories'}`;
     const where = progress.chatKey !== openChatKey ? ` for "${progress.chatId}"` : '';
     if (progress.running) {

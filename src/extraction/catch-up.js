@@ -19,7 +19,17 @@
 // tokens (settings.catchUpMaxTokens) and system header. It keeps writing to
 // the chat it started on even if the user switches chats. Cancel stops it
 // between chunks. The same preset re-extracts a single message the user
-// edited (reextractMessage()). A chunk whose run fails is reported and skipped; a run
+// edited (reextractMessage()).
+//
+// REBUILD (startCatchUp({ rebuild: true })): the same pass over EVERY
+// message, not only the uncovered ones, each chunk's new memories replacing
+// the ones its messages had (replaceMessageMemories() - the messages as
+// shown now; another swipe's memories stay) - so changes to extraction reach
+// the whole chat. A chunk replaces only once it succeeded: a failed or
+// cancelled one leaves its old memories. How far it got is kept
+// (memoryRebuild in the registry entry), so a stopped rebuild continues
+// there; a finished one starts the compiler's Rebuild, the compiled memory
+// resting on the memories just replaced. A chunk whose run fails is reported and skipped; a run
 // State Engine turns away because another independent preset is running is
 // retried after a short wait.
 
@@ -30,10 +40,11 @@ import { getVariable, createVariable, updateVariable, getVariableValue, setVaria
 import { createIndependentPreset, configureIndependentPreset, updateIndependentPresetContext } from '../api/independent-presets.js';
 import { runIndependent } from './independent-run.js';
 import { listObjectTypeIds, getObjectByAlias } from '../api/objects.js';
-import { addMemoryRecords, getAllMemories } from '../memory/archivist.js';
+import { addMemoryRecords, replaceMessageMemories, getAllMemories } from '../memory/archivist.js';
 import { getCurrentChatRef, chatKeyFor, getChatEntry, ensureChatEntry, updateChatEntry } from '../memory/registry.js';
 import { CATCH_UP_MEMORY_VARIABLE, memoryVariableDef } from './memory-variable.js';
 import { convertExtractedItems, createEntityResolver } from './converter.js';
+import { mentionMatcherFor } from '../memory/object-mentions.js';
 import { sourceMessageId } from './messages.js';
 import { uncoveredIndexes, toChunks, carryOver, chunkContext, sourceIndexFor } from './catch-up-plan.js';
 import { rememberExtracted } from '../memory/message-fingerprints.js';
@@ -153,14 +164,17 @@ async function preparePreset() {
         enabled: true,
         connectionProfileId: settings.connectionProfileId || '',
         maxTokens: Number(settings.catchUpMaxTokens) || null,
+        temperature: Number.isFinite(Number(settings.catchUpTemperature)) ? Number(settings.catchUpTemperature) : null,
         promptedHeader: CATCH_UP_HEADER,
     });
 }
 
 // Extracts and stores the memories of the messages `chunk` (indexes into
 // `chat`) for `ref`'s chat, with `records` as what is already remembered.
-// Resolves to { ok, error, added } - added: the records stored.
-async function extractChunk(ref, chat, chunk, records, resolveEntity) {
+// `replace`: the new memories take the place of the ones these messages
+// had (a rebuild). Resolves to { ok, error, added, removed } - added: the
+// records stored, removed: the ids of the ones they replaced.
+async function extractChunk(ref, chat, chunk, records, resolveEntity, mentionsIn, { replace = false } = {}) {
     return withPreset(async () => {
         await updateIndependentPresetContext(CATCH_UP_PRESET, chunkContext(chat, chunk, carryOver(records, chunk[0])));
         const { ok, error } = await runChunk(ref.chatId);
@@ -172,53 +186,92 @@ async function extractChunk(ref, chat, chunk, records, resolveEntity) {
 
         const fields = await convertExtractedItems(items, {
             resolveEntity,
+            mentionsIn,
             sourceFor: (item) => {
                 const index = sourceIndexFor(item, chunk, chat);
                 return sourceMessageId(ref.chatId, index, chat[index]);
             },
         });
-        const added = await addMemoryRecords(ref, fields);
+        const sources = new Set(chunk.map((i) => sourceMessageId(ref.chatId, i, chat[i])));
+        const removed = replace ? records.filter((r) => sources.has(r.source_message_id)).map((r) => r.id) : [];
+        const added = replace ? (await replaceMessageMemories(ref, [...sources], fields)).added : await addMemoryRecords(ref, fields);
         for (const index of chunk) rememberExtracted(ref.chatId, chat[index]);
-        return { ok: true, error: null, added };
+        return { ok: true, error: null, added, removed };
     });
 }
 
 const entityResolverFor = async (chatId) => createEntityResolver(await listObjectTypeIds(), (type, name) => getObjectByAlias(chatId, type, name));
 
-async function runPass(ref, chat) {
+async function runPass(ref, chat, { rebuild = false } = {}) {
     const settings = getSettings();
     const chatKey = chatKeyFor(ref);
     await preparePreset();
 
-    const records = await getAllMemories(chatKey);
-    const indexes = uncoveredIndexes(chat, records, ref.chatId, getChatEntry(chatKey)?.catchUp ?? null);
+    let records = await getAllMemories(chatKey);
+    // A rebuild sends every message (none counts as covered) from where a
+    // stopped one got to.
+    const indexes = rebuild
+        ? uncoveredIndexes(chat, [], ref.chatId, getChatEntry(chatKey)?.memoryRebuild ?? null)
+        : uncoveredIndexes(chat, records, ref.chatId, getChatEntry(chatKey)?.catchUp ?? null);
     const chunks = toChunks(indexes, settings.chunkSize);
     update({ total: chunks.length, messages: indexes.length });
     if (chunks.length === 0) return 'nothing';
 
     const resolveEntity = await entityResolverFor(ref.chatId);
+    const mentionsIn = await mentionMatcherFor(ref.chatId);
     let contiguous = true; // every chunk so far succeeded - the resume point may advance
 
     for (let k = 0; k < chunks.length; k++) {
         if (cancelRequested) return 'cancelled';
         const chunk = chunks[k];
-        const { ok, error, added } = await extractChunk(ref, chat, chunk, records, resolveEntity);
+        const { ok, error, added, removed } = await extractChunk(ref, chat, chunk, records, resolveEntity, mentionsIn, { replace: rebuild });
         if (!ok) {
             contiguous = false;
             update({ failedChunks: progress.failedChunks + 1, lastError: error });
             console.warn(LOG_PREFIX, `catch-up chunk ${k + 1} of ${chunks.length} failed: ${error}`);
         } else {
-            records.push(...added);
+            const gone = new Set(removed);
+            records = records.filter((r) => !gone.has(r.id)).concat(added);
             if (contiguous) {
                 const last = chunk[chunk.length - 1];
+                const point = { index: last, sendDate: String(chat[last].send_date ?? '') };
                 ensureChatEntry(ref);
-                updateChatEntry(chatKey, { catchUp: { index: last, sendDate: String(chat[last].send_date ?? '') } });
+                updateChatEntry(chatKey, rebuild ? { memoryRebuild: point } : { catchUp: point });
             }
             update({ stored: progress.stored + added.length });
         }
         update({ done: k + 1 });
     }
-    return progress.failedChunks === chunks.length ? 'failed' : 'completed';
+    if (progress.failedChunks === chunks.length) return 'failed';
+    // Every chunk done: the rebuild is over (a failed chunk keeps the point
+    // where to continue).
+    if (rebuild && contiguous) updateChatEntry(chatKey, { memoryRebuild: null });
+    return 'completed';
+}
+
+// After a memory rebuild: the compiler's Rebuild, so the compiled memory
+// rests on the new memories (the threads the user wrote are kept). Only
+// for the chat still open - another is rebuilt from its own compile.
+async function compileAfterRebuild(ref) {
+    try {
+        const open = getCurrentChatRef();
+        if (!open || chatKeyFor(open) !== chatKeyFor(ref)) return;
+        const { compileOpenChat } = await import('../compiler/compiler.js');
+        if (await compileOpenChat({ rebuild: true, reason: 'memory rebuild' })) update({ compileStarted: true });
+    } catch (err) {
+        console.warn(LOG_PREFIX, 'could not start the compiler after rebuilding the memories', err);
+    }
+}
+
+// Whether a memory rebuild is running (auto-compiles wait for its end).
+export function isRebuildingMemories() {
+    return progress?.running === true && progress.rebuild === true;
+}
+
+// Whether the chat `chatKey` has a memory rebuild that was stopped before
+// its end - the next one continues from there.
+export function hasUnfinishedRebuild(chatKey) {
+    return !!getChatEntry(chatKey)?.memoryRebuild;
 }
 
 // Extracts the memories of one message again - after the user edited it
@@ -238,21 +291,23 @@ export async function reextractMessage(ref, chat, index) {
 // false (and does nothing) when one is already running or no chat is open;
 // otherwise to true once it has started - follow it with
 // onCatchUpProgress(). `whenDone` (tests) resolves when the pass ends.
-export async function startCatchUp({ whenDone } = {}) {
+// `rebuild`: rebuild the chat's memories from its messages (see REBUILD
+// above) - then the compiler's Rebuild, when the chat is still open.
+export async function startCatchUp({ whenDone, rebuild = false } = {}) {
     if (isCatchUpRunning()) return false;
     const ref = getCurrentChatRef();
     if (!ref) return false;
 
     cancelRequested = false;
     progress = {
-        running: true, cancelling: false, chatKey: chatKeyFor(ref), chatId: ref.chatId, displayName: ref.displayName,
+        running: true, cancelling: false, rebuild, compileStarted: false, chatKey: chatKeyFor(ref), chatId: ref.chatId, displayName: ref.displayName,
         done: 0, total: 0, messages: 0, stored: 0, failedChunks: 0, lastError: null, outcome: null,
         startedAt: new Date().toISOString(), finishedAt: null,
     };
     update({});
 
     const chat = snapshotChat();
-    const pass = runPass(ref, chat)
+    const pass = runPass(ref, chat, { rebuild })
         .catch((err) => {
             console.warn(LOG_PREFIX, 'catch-up failed', err);
             update({ lastError: err?.message ?? String(err) });
@@ -260,7 +315,8 @@ export async function startCatchUp({ whenDone } = {}) {
         })
         .then((outcome) => {
             update({ running: false, cancelling: false, outcome, finishedAt: new Date().toISOString() });
-            console.info(LOG_PREFIX, `catch-up of "${ref.chatId}" ${outcome}: ${progress.stored} memories stored from ${progress.messages} messages`);
+            console.info(LOG_PREFIX, `${rebuild ? 'memory rebuild' : 'catch-up'} of "${ref.chatId}" ${outcome}: ${progress.stored} memories stored from ${progress.messages} messages`);
+            return rebuild && outcome === 'completed' ? compileAfterRebuild(ref) : null;
         });
     whenDone?.(pass);
     return true;

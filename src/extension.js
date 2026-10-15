@@ -11,7 +11,9 @@ import { registerWithStateEngine } from './api/registration.js';
 import { declareCapabilities } from './api/capabilities.js';
 import { EXTENSION_ID, NAMESPACE, LOG_PREFIX } from './constants.js';
 import { getSettings } from './settings.js';
-import { loadCurrentChat } from './memory/archivist.js';
+import { loadCurrentChat, linkObjectMentions } from './memory/archivist.js';
+import { getCurrentChatRef, chatKeyFor } from './memory/registry.js';
+import { mentionMatcherFor } from './memory/object-mentions.js';
 import { exposeArchivistApi } from './public-api.js';
 import { startLiveExtraction } from './extraction/live.js';
 import { addSettingsDrawer } from './ui/settings-drawer.js';
@@ -31,12 +33,26 @@ const CAPABILITIES = ['memory.store', 'memory.query', ...CONTEXT_CAPABILITIES];
 
 // Starts the memory core: loads the open chat's memory and indexes, keeps
 // them in step with chat changes, and publishes the query API.
+// Links the open chat's memories to the objects their text names - objects
+// made since a memory was stored included. Never throws.
+async function linkOpenChatMentions() {
+    try {
+        const ref = getCurrentChatRef();
+        if (!ref) return;
+        const linked = await linkObjectMentions(chatKeyFor(ref), await mentionMatcherFor(ref.chatId));
+        if (linked) console.info(LOG_PREFIX, `linked ${linked} ${linked === 1 ? 'memory' : 'memories'} to the objects ${linked === 1 ? 'it names' : 'they name'}`);
+    } catch (err) {
+        console.warn(LOG_PREFIX, 'could not link memories to the objects they name', err);
+    }
+}
+
 async function startMemoryCore() {
     getSettings();
     const { eventSource, eventTypes } = SillyTavern.getContext();
-    eventSource.on(eventTypes.CHAT_CHANGED, () => void loadCurrentChat());
+    eventSource.on(eventTypes.CHAT_CHANGED, () => void loadCurrentChat().then(linkOpenChatMentions));
     startChatLifecycle();
     await loadCurrentChat();
+    void linkOpenChatMentions();
     // After the first load, so its CHAT_CHANGED listener runs after the
     // memory core's own (which reloads the chat first).
     startMessageSync();

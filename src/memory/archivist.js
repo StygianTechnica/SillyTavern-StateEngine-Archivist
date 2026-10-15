@@ -11,6 +11,9 @@
 //                       from the memory browser (src/ui/memory-browser.js) -
 //                       the only way a stored memory is ever removed.
 // - moveChatMemories()  follows a renamed chat (src/memory/chat-lifecycle.js).
+// - linkObjectMentions() links stored memories to the objects their text
+//                       names (src/memory/object-mentions.js) - an object
+//                       made after a memory still gets it.
 // - applyMessageSync()  keeps the open chat's memories matched to its
 //                       messages as they change - regenerated, swiped,
 //                       edited, deleted (src/memory/message-sync.js).
@@ -28,6 +31,7 @@
 import { LOG_PREFIX } from '../constants.js';
 import { createMemoryRecord, isMemoryRecord } from './schema.js';
 import { buildIndexes } from './indexes.js';
+import { withMentions } from './object-mentions.js';
 import { readMemoryFileQueued, updateMemoryFile, deleteMemoryFile } from './storage.js';
 import {
     getCurrentChatRef, chatKeyFor, getChatEntry, ensureChatEntry, findChatEntriesById, updateChatEntry, removeChatEntry, moveChatEntry, compiledFileFor,
@@ -114,6 +118,30 @@ export async function addMemoryRecords(ref, items) {
     if (chatKey === state.chatKey) setRecords(stored);
     emitChanged(chatKey, ref.chatId);
     return copy(records);
+}
+
+// Replaces the memories of some messages with new ones, in one write: every
+// record whose source_message_id is in `sourceIds` (a message as it is
+// shown now - another swipe's memories have another id and stay) goes, and
+// `items` are added as addMemoryRecords() adds them. For rebuilding a
+// chat's memories from its messages (src/extraction/catch-up.js). Resolves
+// to { added: copies of the records stored, removed: how many went }.
+export async function replaceMessageMemories(ref, sourceIds, items) {
+    const drop = new Set(sourceIds);
+    const records = (Array.isArray(items) ? items : [])
+        .map((item) => createMemoryRecord({ ...item, chat_id: ref.chatId }))
+        .filter(Boolean);
+    const { chatKey, entry } = ensureChatEntry(ref);
+    let removed = 0;
+    const stored = await updateMemoryFile(entry.fileName, (existing) => existing.filter((record) => {
+        if (!isMemoryRecord(record) || !drop.has(record.source_message_id)) return true;
+        removed++;
+        return false;
+    }).concat(records));
+    updateChatEntry(chatKey, { recordCount: stored.filter(isMemoryRecord).length, updatedAt: new Date().toISOString() });
+    if (chatKey === state.chatKey) setRecords(stored);
+    emitChanged(chatKey, ref.chatId);
+    return { added: copy(records), removed };
 }
 
 // API 1 - every record in the open chat that names `entityId`.
@@ -217,6 +245,31 @@ export function whenOpenChatLoaded() {
 // copies - what src/memory/message-sync.js plans from.
 export function getOpenChatRecords() {
     return { chatKey: state.chatKey, chatId: state.ref?.chatId ?? null, records: copy(state.all) };
+}
+
+// Links every memory of `chatKey` to the objects its text names that it
+// isn't linked to yet (`mentionsIn`: object-mentions.js mentionMatcher).
+// Resolves to how many memories gained a link; writes only then.
+export async function linkObjectMentions(chatKey, mentionsIn) {
+    const entry = chatKey ? getChatEntry(chatKey) : null;
+    if (!entry) return 0;
+    // Read first: a chat with nothing new to link is never written.
+    const current = await readMemoryFileQueued(entry.fileName);
+    if (!current.some((record) => isMemoryRecord(record) && withMentions(record, mentionsIn) !== record)) return 0;
+    let linked = 0;
+    const stored = await updateMemoryFile(entry.fileName, (existing) => {
+        const next = existing.map((record) => {
+            if (!isMemoryRecord(record)) return record;
+            const updated = withMentions(record, mentionsIn);
+            if (updated !== record) linked++;
+            return updated;
+        });
+        return linked ? next : existing;
+    });
+    if (!linked) return 0;
+    if (chatKey === state.chatKey) setRecords(stored);
+    emitChanged(chatKey, entry.chatId);
+    return linked;
 }
 
 // Applies a plan from planMessageSync() (src/memory/message-sync-plan.js)

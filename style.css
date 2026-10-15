@@ -615,3 +615,12 @@
     align-self: flex-start;
     margin: 2px 0 6px;
 }
+
+.ar-mb-rebuild-status {
+    flex-basis: 100%;
+    opacity: 0.85;
+}
+
+.ar-mb-rebuild-status.ar-mb-error {
+    color: #e05555;
+}

@@ -19,6 +19,10 @@ const DEFAULTS = {
     // Max tokens for a catch-up run's answer: a chunk of many messages can
     // hold many memories.
     catchUpMaxTokens: 2000,
+    // Catch-up's (and a memory rebuild's) temperature: low, like the
+    // compiler's - extraction is bookkeeping, and a small model keeps to its
+    // JSON at a low temperature.
+    catchUpTemperature: 0.3,
     // Chat registry: { [chatKey]: entry } - see src/memory/registry.js.
     chats: {},
     // Which version of the live preset's extraction variable is installed

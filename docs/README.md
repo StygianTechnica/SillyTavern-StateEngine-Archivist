@@ -91,7 +91,8 @@ For a chat that existed before you enabled Archivist (or while it was off):
    Smaller chunks are more reliable on small models.
 4. **Max tokens** (default 2000) - the longest answer a call may give. A
    chunk of many messages can hold many memories; too low, and the answer is
-   cut off and lost.
+   cut off and lost. **Temperature** (default 0.3) - keep it low: small
+   models break the JSON they answer in at higher values.
 5. **Run catch-up for this chat**. The status line shows *Chunk 3 of 12 - 14
    memories stored so far*; keep chatting, or switch chats - it keeps working
    on the chat it started on. **Cancel** stops after the chunk in progress.
@@ -104,6 +105,25 @@ Each chunk is told what is already remembered, so it doesn't repeat it.
 Catch-up uses its own State Engine preset, **Archivist History Catch-Up**
 (an independent preset - it doesn't take part in the per-message update).
 It works whether or not *Enable Archivist* is on.
+
+### Rebuilding a chat's memories from its messages
+
+Memories are extracted once, as messages arrive - so an improvement to
+extraction (plans recorded whole, say) only reaches what comes after it.
+**Rebuild memories from chat**, at the bottom of the memory browser's
+*Memories* view, reads the open chat again from its first message, with
+the current extraction, through the catch-up preset and its settings:
+
+- Each chunk's new memories **replace** that chunk's old ones - only once
+  the chunk succeeded. A chunk that fails, or that you stop before, keeps its
+  old memories. Memories of swipes you're not showing are left alone.
+- It takes a while on a long chat; keep chatting meanwhile. **Stop
+  rebuilding** stops after the chunk in progress, and the button then offers
+  **Continue rebuilding memories** from where it stopped.
+- When it's done, the compiler's **Rebuild** runs on the new memories
+  (story threads you wrote yourself are kept). Automatic compiles wait until
+  then.
+- Memories you deleted may come back - they are found again in the messages.
 
 ### The compiler: characters, relationships, threads, the world, timeline
 

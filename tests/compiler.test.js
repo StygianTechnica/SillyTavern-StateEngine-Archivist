@@ -270,14 +270,10 @@ describe('planning and parsing', () => {
         expect(parseTension([], first, batch)).toBe(first);
         expect(parseTension(undefined, undefined, batch)).toEqual([]);
 
-        expect(compileContext({ ...previous, tension: [] }, batch)).toContain('Story tension so far: (none yet)');
-        expect(compileContext({ ...previous, tension: later }, batch)).toContain([
-            'Story tension so far (latest readings, oldest first):',
-            '- at message #13: threat 4, uncertainty 2, emotional 3 (overall 3) - Graxx is ruthless.',
-            '- at message #20: threat 5, uncertainty 5, emotional 2 (overall 4)',
-        ].join('\n'));
+        // Earlier readings are never shown: a small model only copies them.
+        expect(compileContext({ ...previous, tension: later }, batch)).not.toContain('threat 4');
+        expect(compileContext({ ...previous, tension: later }, batch)).not.toMatch(/tension/i);
     });
-
     it('lays the tension readings out as a graph', () => {
         expect(tensionChart([])).toBeNull();
         const chart = tensionChart([
@@ -656,6 +652,10 @@ describe('compiling through the independent preset', () => {
             'archivist__compiled_tension',
         ]);
         expect(preset.variables.get('archivist__compiled_story_summary')).toMatchObject({ type: 'string', prompted: { newEachTurn: true } });
+        const tension = preset.variables.get('archivist__compiled_tension').prompted.instructions;
+        // A fixed meaning per level, at the batch's most tense moment.
+        expect(tension).toContain('MOST TENSE moment');
+        expect(tension).toContain('4 a fight or a life at risk');
         expect(preset.variables.get('archivist__compiled_facts').prompted.newEachTurn).toBe(true);
         const world = fake.presets.get(`archivist.${WORLD_COMPILER_PRESET}`);
         expect(world.independentConfig.promptedHeader).toBe(WORLD_COMPILER_HEADER);

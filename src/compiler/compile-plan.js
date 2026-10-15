@@ -33,7 +33,8 @@
 //                 compiled), and the newest message the scene summary was
 //                 written from (null when unknown)
 //   tension       [reading] - the story's tension, one reading per compile
-//                 batch, oldest first (a rebuild starts the series over)
+//                 batch (its most tense moment), oldest first (a rebuild
+//                 starts the series over)
 //   reading       { at: the newest message index of its batch (or null),
 //                   memory_id: that batch's newest memory, threat,
 //                   uncertainty, emotional (0..TENSION_MAX), overall (their
@@ -204,17 +205,6 @@ function characterLine(c) {
     return `- ${c.entity.name}: ${parts.join('; ') || '(nothing yet)'}`;
 }
 
-// The latest tension readings, so the next one is judged on the same scale.
-export const TENSION_CONTEXT = 5;
-
-function tensionLines(tension) {
-    const recent = (tension ?? []).slice(-TENSION_CONTEXT);
-    if (!recent.length) return ['Story tension so far: (none yet)'];
-    return ['Story tension so far (latest readings, oldest first):', ...recent.map((t) => (
-        `- ${t.at === null ? 'at an earlier point' : `at message #${t.at}`}: threat ${t.threat}, uncertainty ${t.uncertainty}, emotional ${t.emotional} (overall ${t.overall})${t.reason ? ` - ${t.reason}` : ''}`
-    ))];
-}
-
 // What the MEMORY part's model reads: the current facts, relationships and
 // character insights, then the new memories. `nameOf(id)` -> a display
 // name for an entity id (or null).
@@ -225,7 +215,6 @@ export function compileContext(previous, batch, nameOf = () => null, extraLines 
         'Current compiled knowledge:',
         `Story so far: ${previous.summary?.story || '(none yet)'}`,
         `Current scene: ${previous.summary?.scene || '(none yet)'}`,
-        ...tensionLines(previous.tension),
         'Facts:',
     ];
     if (previous.facts.length === 0) lines.push('(none yet)');

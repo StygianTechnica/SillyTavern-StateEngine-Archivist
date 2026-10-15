@@ -198,6 +198,17 @@ A pass, for the chat open when it starts:
    attributed to the `message_index` it names, else the chunk's last reply -
    and `addMemoryRecords()`. While every chunk so far has succeeded, move the
    resume point to the chunk's last message.
+
+A **rebuild** (`startCatchUp({ rebuild: true })`, the memory browser's
+*Rebuild memories from chat*) is the same pass over every message - none
+counts as covered - from its own resume point (`entry.memoryRebuild`, so a
+stopped rebuild continues). Each successful chunk's memories REPLACE the
+ones its messages had, in one write (`replaceMessageMemories()`: the
+records whose `source_message_id` is a chunk message as shown now - another
+swipe's keep theirs); a failed chunk keeps its old ones. The carry-over
+reads the rebuilt memories, never the old ones it replaces. Automatic
+compiles wait while it runs (`isRebuildingMemories()`); a finished rebuild
+starts the compiler's Rebuild for the chat, if it is still open.
 4. State Engine queues each run behind whatever else is using the same
    connection (its main update, the compiler) and resolves when it has
    run - Archivist never waits or retries on its own. A chunk that fails is
@@ -364,12 +375,13 @@ the newest `SCENE_WINDOW` messages, from the memories themselves, since the
 model rarely classes a fact SCENE.
 
 Story tension: the memory part also answers `compiled_tension`, one reading
-of the story's tension at the batch's newest memories - threat,
+of the story's tension at the batch's most tense moment - threat,
 uncertainty and emotional, each 0..5, and a reason. `parseTension()` adds it
 to `compiled.tension` with its overall (the average of the three) and the
 batch's newest message and memory; a reading at the same message as the
-last one replaces it. The model sees the last `TENSION_CONTEXT` readings,
-so it keeps to one scale. The series is one point per compile batch - a
+last one replaces it. The model never sees earlier readings - a small
+model copies them - but a fixed meaning for each level of each axis
+(threat 4: a fight or a life at risk). The series is one point per compile batch - a
 graph of the story's tension (the memory browser draws one), and something
 pacing can read later. A Rebuild starts the series over, one point per
 `COMPILE_BATCH` memories, so a rebuilt series is coarser than a live one.

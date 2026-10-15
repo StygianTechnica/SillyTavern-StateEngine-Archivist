@@ -20,6 +20,8 @@
 //   chatId          the chat the memories belong to
 //   sourceFor(item) -> source_message_id for an item
 //   resolveEntity(name) -> Promise<{ id, type } | object id | null>
+//   mentionsIn(text) -> [{ id, type }]  objects the text itself names
+//                   (src/memory/object-mentions.js), added to the entities
 
 const isText = (value) => typeof value === 'string' && value.trim() !== '';
 
@@ -31,7 +33,7 @@ function nameList(raw) {
 const entityNames = (item) => nameList(item.entities ?? item.entity_names ?? item.entity_ids);
 const witnessNames = (item) => nameList(item.present ?? item.witnesses ?? item.witness_ids);
 
-export async function convertExtractedItems(items, { sourceFor, resolveEntity }) {
+export async function convertExtractedItems(items, { sourceFor, resolveEntity, mentionsIn = () => [] }) {
     if (!Array.isArray(items)) return [];
     const converted = [];
 
@@ -52,6 +54,11 @@ export async function convertExtractedItems(items, { sourceFor, resolveEntity })
             return [...ids];
         };
         const entityIds = await resolveAll(entityNames(item));
+        for (const object of mentionsIn(item.text)) {
+            if (entityIds.includes(object.id)) continue;
+            entityIds.push(object.id);
+            if (object.type) types[object.id] = object.type;
+        }
         const witnessIds = await resolveAll(witnessNames(item));
 
         converted.push({

@@ -125,6 +125,7 @@ function wireCatchUp() {
     });
     bindNumber('ar_chunk_size', 'chunkSize', 5, 200);
     bindNumber('ar_catchup_tokens', 'catchUpMaxTokens', 300, 16000);
+    bindNumber('ar_catchup_temperature', 'catchUpTemperature', 0, 2, 2);
     byId('ar_catchup_run').addEventListener('click', async () => {
         if (byId('ar_catchup_run').dataset.disabled === 'true') return;
         if (!await startCatchUp()) toastr.info('Catch-up is already running, or no chat is open.', 'Archivist');

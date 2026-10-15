@@ -36,6 +36,7 @@ import { addMemoryRecords } from '../memory/archivist.js';
 import { getCurrentChatRef } from '../memory/registry.js';
 import { MEMORY_VARIABLE, memoryVariableDef } from './memory-variable.js';
 import { convertExtractedItems, createEntityResolver } from './converter.js';
+import { mentionMatcherFor } from '../memory/object-mentions.js';
 import { sourceMessageId, lastReplyIndex } from './messages.js';
 import { rememberExtracted } from '../memory/message-fingerprints.js';
 import { CONTEXT_BLOCKS, contextVariableDef } from '../context/prompt-context.js';
@@ -155,7 +156,7 @@ async function storeLiveItems(ref, items) {
     const source = index === -1 ? `${ref.chatId}#unknown` : sourceMessageId(ref.chatId, index, chat[index]);
 
     const resolveEntity = createEntityResolver(await listObjectTypeIds(), (type, name) => getObjectByAlias(ref.chatId, type, name));
-    const fields = await convertExtractedItems(items, { sourceFor: () => source, resolveEntity });
+    const fields = await convertExtractedItems(items, { sourceFor: () => source, resolveEntity, mentionsIn: await mentionMatcherFor(ref.chatId) });
     const stored = await addMemoryRecords(ref, fields);
     if (index !== -1) rememberExtracted(ref.chatId, chat[index]);
     return stored;

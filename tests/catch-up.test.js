@@ -120,7 +120,7 @@ describe('the catch-up pass', () => {
         getSettings().catchUpMaxTokens = 3000;
         await run();
         const config = fake.calls.filter((c) => c.name === 'configureIndependentPreset').at(-1).args[2];
-        expect(config).toMatchObject({ connectionProfileId: 'profile-big', maxTokens: 3000, enabled: true });
+        expect(config).toMatchObject({ connectionProfileId: 'profile-big', maxTokens: 3000, temperature: 0.3, enabled: true });
     });
 
     it('reads the chat in chunks and stores each memory against the message it came from', async () => {
@@ -225,5 +225,83 @@ describe('the catch-up pass', () => {
         await run();
         stop();
         expect(seen).toEqual(expect.arrayContaining(['0/3', '1/3', '2/3', '3/3']));
+    });
+});
+
+describe('rebuilding the memories from the chat', () => {
+    let fake;
+    const rebuild = async () => {
+        const done = [];
+        const started = await startCatchUp({ rebuild: true, whenDone: (p) => done.push(p) });
+        if (started) await done[0];
+        return getCatchUpProgress();
+    };
+    const contexts = () => fake.calls.filter((c) => c.name === 'runIndependentPreset' && c.args[1].name === CATCH_UP_PRESET).map((c) => c.args[2]);
+    const texts = async () => (await getAllMemories()).map((m) => m.text);
+
+    beforeEach(async () => {
+        fake = resetFakeStateEngine();
+        getContext().chat = chatOf(6);
+        Object.assign(getSettings(), { chunkSize: 2, enabled: true, compileAuto: true, compileWorld: false });
+        await loadCurrentChat();
+        // What the chat had before: an old memory on messages 1 and 3, and
+        // one from a swipe of message 5 that isn't shown.
+        await addMemoryRecords(getCurrentChatRef(), [
+            { text: 'old 1', source_message_id: 'Chat A#1@d1' },
+            { text: 'old 3', source_message_id: 'Chat A#3@d3' },
+            { text: 'other swipe of 5', source_message_id: 'Chat A#5@swipe' },
+        ]);
+        fake.respond = async (context) => {
+            if (!context.includes('Chat messages:')) return { archivist__compiled_facts: [{ text: 'compiled', sources: ['m1'] }] };
+            const indexes = [...context.matchAll(/\[#(\d+)\]/g)].map((m) => Number(m[1]));
+            return [{ text: `new ${indexes.join('+')}`, message_index: indexes[1] }];
+        };
+    });
+
+    it('reads every message again and replaces each chunk\'s memories - not another swipe\'s - then recompiles', async () => {
+        const { getCompilerStatus } = await import('../src/compiler/compiler.js');
+        const progress = await rebuild();
+        // Every message, covered or not.
+        expect(contexts()).toHaveLength(3);
+        expect(contexts()[0]).not.toContain('Already remembered');
+        expect(contexts()[1]).toContain('Already remembered (do not repeat these):\n- new 0+1');
+        expect(await texts()).toEqual(['other swipe of 5', 'new 0+1', 'new 2+3', 'new 4+5']);
+        expect(progress).toMatchObject({ rebuild: true, outcome: 'completed', total: 3, stored: 3 });
+        expect(getChatEntry('char:alice.png:Chat A').memoryRebuild).toBeNull();
+        await vi.waitFor(() => expect(getCompilerStatus()).toMatchObject({ running: false, rebuild: true, reason: 'memory rebuild', outcome: 'compiled' }));
+        expect(getCatchUpProgress().compileStarted).toBe(true);
+    });
+
+    it('keeps a failed chunk\'s old memories, and continues from where it stopped', async () => {
+        const respond = fake.respond;
+        let calls = 0;
+        fake.respond = async (context) => {
+            if (context.includes('Chat messages:') && ++calls === 2) throw new Error('model timed out');
+            return respond(context);
+        };
+        const first = await rebuild();
+        expect(first).toMatchObject({ outcome: 'completed', failedChunks: 1 });
+        expect(await texts()).toEqual(['old 3', 'other swipe of 5', 'new 0+1', 'new 4+5']);
+        // The point to continue from: after the last chunk before the failed one.
+        expect(getChatEntry('char:alice.png:Chat A').memoryRebuild).toEqual({ index: 1, sendDate: 'd1' });
+
+        fake.respond = respond;
+        await rebuild();
+        expect(contexts().slice(3)).toHaveLength(2);
+        expect(contexts()[3]).toContain('[#2] User: message 2');
+        expect(await texts()).toEqual(['other swipe of 5', 'new 0+1', 'new 2+3', 'new 4+5']);
+        expect(getChatEntry('char:alice.png:Chat A').memoryRebuild).toBeNull();
+    });
+
+    it('stops between chunks when asked, keeping the rest', async () => {
+        const respond = fake.respond;
+        fake.respond = async (context) => {
+            if (context.includes('[#0]')) cancelCatchUp();
+            return respond(context);
+        };
+        const progress = await rebuild();
+        expect(progress).toMatchObject({ outcome: 'cancelled', done: 1 });
+        expect(await texts()).toEqual(['old 3', 'other swipe of 5', 'new 0+1']);
+        expect(getChatEntry('char:alice.png:Chat A').memoryRebuild).toEqual({ index: 1, sendDate: 'd1' });
     });
 });
