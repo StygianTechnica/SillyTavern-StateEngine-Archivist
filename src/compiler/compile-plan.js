@@ -52,7 +52,8 @@
 // continued item's earlier sources. An item the answer leaves out is KEPT
 // (carriedForward()): models drop items from a long list without meaning
 // to - a relationship, a secret, a quest seed - so only facts are ever
-// dropped by the model ("no longer true"). The user removes the rest. buildCompiledView() turns a state into
+// dropped by the model ("no longer true"), and not more than half of them
+// at once (ELIDED_FACTS_MIN). The user removes the rest. buildCompiledView() turns a state into
 // what the API returns, colour-tagged, every item linked back to the chat
 // messages it rests on (through its source memories, whose message indexes
 // message-sync keeps current).
@@ -306,11 +307,17 @@ function idAssigner(prefix, previousItems) {
 //   refs                        refsFor() of the batch
 //   recordsById                 Map id -> memory record (for fallbacks)
 //   resolve(name)               -> entity for a name
+// A facts answer that keeps fewer than half of at least this many current
+// facts is taken as shortened ("f1, f2, ..., f40" - small models elide long
+// lists), not as that many facts no longer holding: the ones it left out
+// are kept.
+export const ELIDED_FACTS_MIN = 6;
+
 export function parseCompileOutput(rawFacts, rawRelationships, { previous, refs, recordsById, resolve }) {
     const previousById = new Map(previous.facts.map((f) => [f.id, f]));
     const nextId = idAssigner('f', previous.facts);
     const dismissed = dismissedTest(previous.dismissed);
-    const facts = [];
+    let facts = [];
     for (const raw of Array.isArray(rawFacts) ? rawFacts : []) {
         if (!raw || typeof raw !== 'object' || !isText(raw.text) || dismissed('fact', raw)) continue;
         const id = nextId(raw);
@@ -326,6 +333,8 @@ export function parseCompileOutput(rawFacts, rawRelationships, { previous, refs,
         });
     }
     if (previous.facts.length > 0 && facts.length === 0) return null;
+    const kept = facts.filter((f) => previousById.has(f.id)).length;
+    if (previous.facts.length >= ELIDED_FACTS_MIN && kept < previous.facts.length / 2) facts = carriedForward(facts, previous.facts, (f) => f.id);
     const ids = new Set(facts.map((f) => f.id));
     for (const fact of facts) fact.contradicts = fact.contradicts.filter((other) => other !== fact.id && ids.has(other));
 

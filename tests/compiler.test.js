@@ -197,6 +197,16 @@ describe('planning and parsing', () => {
         ]);
     });
 
+    it('keeps the facts a shortened answer left out ("f1, f2, ..., f40"), but lets a few go', () => {
+        const many = { ...previous, facts: Array.from({ length: 8 }, (_, i) => ({ ...previous.facts[0], id: `f${i + 1}`, text: `Fact ${i + 1}.` })) };
+        const elided = parseCompileOutput([{ id: 'f1', text: 'Fact 1.' }, { id: 'f2', text: 'Fact 2.' }, { id: 'f9', text: 'New.' }], [], { ...options, previous: many });
+        expect(elided.facts.map((f) => f.id)).toEqual(['f1', 'f2', 'f9', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8']);
+        const fewGone = parseCompileOutput(many.facts.slice(0, 5).map((f) => ({ id: f.id, text: f.text })), [], { ...options, previous: many });
+        expect(fewGone.facts.map((f) => f.id)).toEqual(['f1', 'f2', 'f3', 'f4', 'f5']);
+        // A short list is the model's to change.
+        expect(parseCompileOutput([{ id: 'f9', text: 'New.' }], [], options).facts.map((f) => f.id)).toEqual(['f9']);
+    });
+
     it('reads tension levels 0..5 and averages them', () => {
         expect([3, '4', '4/5', 4.6, 9, -2, 'high', null].map(normalizeTensionLevel)).toEqual([3, 4, 4, 5, 5, 0, null, null]);
         expect(tensionOverall({ threat: 4, uncertainty: 2, emotional: 3 })).toBe(3);
