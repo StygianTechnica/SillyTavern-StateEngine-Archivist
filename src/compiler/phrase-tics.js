@@ -52,9 +52,25 @@ const FILLER = new Set([
 ]);
 const MIN_CONTENT = 2;
 
+// A phrase never starts on a joining word: "and a wry smile" is "a wry
+// smile" - and never ends on a FILLER word ("the depth of their").
+const BAD_START = new Set(['and', 'but', 'or', 'as', 'then', 'of', 'to', 'at', 'with', 'that', 'which', 'while', 'so', 'for', 'from', 'by', 'in', 'on', 'into', 'than', 'if', 'when']);
+
 // Plain text of a message: no markup, no emphasis marks.
 function plain(text) {
     return String(text ?? '').replace(/<[^>]*>/g, ' ').replace(/[*_~`]+/g, ' ');
+}
+
+// The NARRATION of a message, in clauses: dialogue (in quotes) left out -
+// a character's own words are their voice, not the narration's habit - and
+// the rest cut at punctuation, so no phrase runs from one clause into the
+// next ("Varyn said, his voice low" is not "said his voice").
+function clauses(text) {
+    return plain(text)
+        .replace(/"[^"]*"|“[^”]*”/g, '|')
+        .split(/[.,;:!?…()[\]|]+|\s[-–—]+\s|[–—]+/)
+        .map((c) => c.trim())
+        .filter(Boolean);
 }
 
 // [{ word (normalized), raw (as written) }] of a text.
@@ -74,12 +90,18 @@ export function phraseKey(text) {
     return tokens(text).map((t) => t.word).join(' ');
 }
 
-// Whether `text` uses the phrase with key `key`.
+// Whether the narration of `text` uses the phrase with key `key`.
 export function usesPhrase(text, key) {
-    return !!key && ` ${phraseKey(text)} `.includes(` ${key} `);
+    return !!key && clauses(text).some((clause) => ` ${phraseKey(clause)} `.includes(` ${key} `));
 }
 
 const contentWords = (words) => words.filter((w) => !FILLER.has(w)).length;
+
+// Whether words (normalized) can be a phrase on their own: enough content,
+// no joining word in front, no dangling word at the end.
+export function wellFormed(words) {
+    return words.length >= MIN_WORDS && contentWords(words) >= MIN_CONTENT && !BAD_START.has(words[0]) && !FILLER.has(words[words.length - 1]);
+}
 
 // The sentence of `text` around position `at` (a character index), trimmed.
 function sentenceAround(text, at) {
@@ -102,24 +124,30 @@ export function findCandidates(replies) {
     // key -> { key, text, spans: Map(reply index -> [start, end)), example }
     const found = new Map();
     for (const reply of replies ?? []) {
-        const toks = tokens(reply.text);
-        for (let n = MIN_WORDS; n <= MAX_WORDS; n++) {
-            for (let i = 0; i + n <= toks.length; i++) {
-                const slice = toks.slice(i, i + n);
-                const words = slice.map((t) => t.word);
-                const key = words.join(' ');
-                if (contentWords(words) < MIN_CONTENT) continue;
-                // Three words around a name ("back to Remus") are the story,
-                // not wording: a capital after the first word is a name.
-                if (n < 4 && slice.slice(1).some((t) => /^\p{Lu}/u.test(t.raw))) continue;
-                if (!found.has(key)) {
-                    const text = slice.map((t) => t.raw).join(' ');
-                    const at = plain(reply.text).replace(/\s+/g, ' ').indexOf(slice[0].raw);
-                    found.set(key, { key, text, spans: new Map(), example: sentenceAround(reply.text, Math.max(0, at)) });
+        // Positions run on across the clauses (offset), for overlap.
+        let offset = 0;
+        for (const clause of clauses(reply.text)) {
+            const toks = tokens(clause);
+            for (let n = MIN_WORDS; n <= MAX_WORDS; n++) {
+                for (let i = 0; i + n <= toks.length; i++) {
+                    const slice = toks.slice(i, i + n);
+                    const words = slice.map((t) => t.word);
+                    if (!wellFormed(words)) continue;
+                    // Three words around a name ("back to Remus") are the
+                    // story, not wording: a capital after the first word is a name.
+                    if (n < 4 && slice.slice(1).some((t) => /^\p{Lu}/u.test(t.raw))) continue;
+                    const key = words.join(' ');
+                    if (!found.has(key)) {
+                        const text = slice.map((t) => t.raw).join(' ');
+                        const source = plain(reply.text).replace(/\s+/g, ' ');
+                        const at = source.indexOf(text) >= 0 ? source.indexOf(text) : source.indexOf(text.split(' ')[0]);
+                        found.set(key, { key, text, spans: new Map(), example: sentenceAround(reply.text, Math.max(0, at)) });
+                    }
+                    const spans = found.get(key).spans;
+                    if (!spans.has(reply.index)) spans.set(reply.index, [offset + i, offset + i + n]);
                 }
-                const spans = found.get(key).spans;
-                if (!spans.has(reply.index)) spans.set(reply.index, [i, i + n]);
             }
+            offset += toks.length + 1;
         }
     }
     const length = (c) => c.key.split(' ').length;
@@ -165,7 +193,7 @@ export function parseTicAnswer(raw, candidates) {
         const ref = String(item.ref ?? item.id ?? '').replace(/^\[|\]$/g, '').trim();
         const candidate = byRef.get(ref) ?? (key ? list.find((c) => near(c.key, key)) : null);
         if (!candidate) continue;
-        const own = key.split(' ').length >= 3 && (candidate.key.includes(key) || key.includes(candidate.key));
+        const own = wellFormed(key.split(' ')) && (candidate.key.includes(key) || key.includes(candidate.key));
         const tic = own ? { key, phrase } : { key: candidate.key, phrase: candidate.text };
         if (keys.has(tic.key)) continue;
         keys.add(tic.key);

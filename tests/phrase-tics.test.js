@@ -56,6 +56,18 @@ describe('finding repeated wording', () => {
         expect(findCandidates([{ index: 1, text: 'Mira raised an eyebrow.' }, { index: 2, text: 'Kael raised an eyebrow.' }])).toEqual([]);
     });
 
+    it('never runs a phrase across punctuation, into dialogue, or onto a dangling word', () => {
+        const keys = findCandidates([
+            { index: 1, text: 'Varyn said, his voice low. "For now, let\'s focus on the road," he added. It spoke volumes about the depth of their bond.' },
+            { index: 2, text: 'Mira said, her voice low. "For now, let\'s focus on the road," she said. It spoke volumes about the depth of their trust.' },
+        ]).map((c) => c.key);
+        expect(keys).toEqual(['it spoke volumes about the depth']);
+        expect(keys.some((k) => k.includes('said their voice'))).toBe(false);
+        expect(keys.some((k) => k.includes('focus on the road'))).toBe(false);
+        expect(keys.some((k) => k.endsWith(' their') || k.endsWith(' of'))).toBe(false);
+        expect(usesPhrase('"A wry smile tugged at his lips," she joked.', 'a wry smile tugged at their lips')).toBe(false);
+    });
+
     it('takes the model\'s answer in a loose shape - no ref, or plain strings', () => {
         const candidates = findCandidates(replies);
         expect(parseTicAnswer(['his tone turned serious', { phrase: 'a wry smile tugged at her lips' }, 'invented phrase'], candidates).map((t) => t.key))
@@ -145,6 +157,12 @@ describe('in a chat', () => {
         removePhraseTic(chatKeyFor(getCurrentChatRef()), getChatPhraseTics()[0].key);
         expect(getChatPhraseTics()).toEqual([]);
         expect(context).toContain('[p1] "A wry smile tugged at his lips" - in 2 replies');
+    });
+
+    it('drops tics the older rules found', () => {
+        const entry = getSettings().chats[chatKeyFor(getCurrentChatRef())];
+        entry.phraseTics = { tics: [{ phrase: 'said his voice', key: 'said their voice', count: 1 }], counter: 3, lastReply: null };
+        expect(getChatPhraseTics()).toEqual([]);
     });
 
     it('does nothing while tracking is off', async () => {

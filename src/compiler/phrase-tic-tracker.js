@@ -19,10 +19,17 @@ export const PHRASE_TICS_CHANGED_EVENT = 'archivist_phrase_tics_changed';
 // AI replies without a tic before it loses a count (settings.phraseTicFadeAfter).
 export const DEFAULT_FADE_AFTER = 10;
 
+// Tics found by an older version of the rules are dropped on reading - the
+// first rules cut phrases across punctuation and into dialogue ("said his
+// voice", "for now let's"), so what they found is not worth keeping.
+export const TIC_RULES_VERSION = 2;
+
 function stateOf(chatKey) {
     const saved = getChatEntry(chatKey)?.phraseTics;
+    const current = saved?.rules === TIC_RULES_VERSION;
     return {
-        tics: Array.isArray(saved?.tics) ? saved.tics : [],
+        rules: TIC_RULES_VERSION,
+        tics: current && Array.isArray(saved?.tics) ? saved.tics : [],
         counter: Number.isInteger(saved?.counter) ? saved.counter : 0,
         lastReply: saved?.lastReply ?? null,
     };
@@ -96,7 +103,7 @@ export function countNewestReply() {
         const counter = state.counter + 1;
         const fadeAfter = Math.max(1, Number(getSettings().phraseTicFadeAfter) || DEFAULT_FADE_AFTER);
         const tics = updateForReply(state.tics, chat[index].mes, { now: new Date().toISOString(), counter, fadeAfter });
-        save(chatKey, { tics, counter, lastReply: id });
+        save(chatKey, { ...state, tics, counter, lastReply: id });
     } catch (err) {
         console.warn(LOG_PREFIX, 'could not count phrase tics', err);
     }
