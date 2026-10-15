@@ -115,6 +115,11 @@ const names = (value) => {
     return [...new Set(list.filter(isText).map((n) => n.trim()))];
 };
 const text = (value) => (isText(value) ? value.trim() : '');
+// What a small model writes in place of an item it means to keep as it is
+// ("... (remains the same)", "(unchanged)") - never an item of its own: the
+// one it stands for is kept (carriedForward()).
+export const isPlaceholder = (value) => isText(value)
+    && /^\s*(\.\.\.|…)|^\s*\(?\s*(remains|unchanged|same as (before|above)|no change)[^)]*\)?\s*\.?\s*$|\((remains the same|unchanged|same as before)\)/i.test(value);
 const words = (token) => String(token ?? '').replace(/_/g, ' ');
 const messageIndexOf = (record) => parseSource(record?.source_message_id)?.index ?? null;
 const entityKey = (e) => (e.id ?? `name:${String(e.name ?? '').toLowerCase()}`);
@@ -321,7 +326,7 @@ export function parseCompileOutput(rawFacts, rawRelationships, { previous, refs,
     const dismissed = dismissedTest(previous.dismissed);
     let facts = [];
     for (const raw of Array.isArray(rawFacts) ? rawFacts : []) {
-        if (!raw || typeof raw !== 'object' || !isText(raw.text) || dismissed('fact', raw)) continue;
+        if (!raw || typeof raw !== 'object' || !isText(raw.text) || isPlaceholder(raw.text) || dismissed('fact', raw)) continue;
         const id = nextId(raw);
         const sources = [...new Set([...(previousById.get(id)?.sources ?? []), ...sourceIdsOf(raw.sources, refs)])];
         facts.push({
@@ -476,7 +481,7 @@ export function parseThreads(rawThreads, { previous, refs, resolve }) {
     const fresh = withoutReusedIds(Array.isArray(rawThreads) ? rawThreads : [], previous.threads ?? [], (t) => t.title);
     const raws = matchByWords(fresh, previous.threads ?? [], (t) => looseKey(t?.title), 't');
     for (const raw of raws) {
-        if (!raw || typeof raw !== 'object' || !(isText(raw.text) || isText(raw.title)) || dismissed('thread', raw)) continue;
+        if (!raw || typeof raw !== 'object' || !(isText(raw.text) || isText(raw.title)) || isPlaceholder(raw.text) || isPlaceholder(raw.title) || dismissed('thread', raw)) continue;
         const id = nextId(raw);
         const title = text(raw.title) || text(raw.text).split(/[.!?]/)[0].slice(0, 80);
         const linked = resolve(title);
@@ -632,7 +637,7 @@ export function parseWorld(rawWorld, { previous, refs, resolve }) {
     const fresh = withoutReusedIds(Array.isArray(rawWorld) ? rawWorld : [], previous.world ?? [], (w) => w.name);
     const raws = matchByWords(fresh, previous.world ?? [], (w) => (w?.name ? `${normalizeWorldKind(w.kind)}:${looseKey(w.name)}` : ''), 'w');
     for (const raw of raws) {
-        if (!raw || typeof raw !== 'object' || !(isText(raw.text) || isText(raw.name)) || dismissed('world', raw)) continue;
+        if (!raw || typeof raw !== 'object' || !(isText(raw.text) || isText(raw.name)) || isPlaceholder(raw.text) || isPlaceholder(raw.name) || dismissed('world', raw)) continue;
         const id = nextId(raw);
         const kind = normalizeWorldKind(raw.kind);
         const name = text(raw.name) || text(raw.text).split(/[.!?]/)[0].slice(0, 80);

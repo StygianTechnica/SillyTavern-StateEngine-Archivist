@@ -11,7 +11,7 @@ import { getSettings } from '../src/settings.js';
 import { colorTagFor, normalizeClassification, withColorTag, COLOR_TAGS } from '../src/compiler/compiled-schema.js';
 import {
     refsFor, compileContext, worldContext, parseCompileOutput, parseCharacters, parseThreads, parseWorld, changesSince, buildCompiledView, EMPTY_COMPILED,
-    editCompiledItem, removeCompiledItem, editCompiledSummary, compiledItemKey, dismissKey, parseTension, relationshipType, keepAuthored, addCompiledThread,
+    editCompiledItem, removeCompiledItem, editCompiledSummary, compiledItemKey, dismissKey, parseTension, relationshipType, keepAuthored, addCompiledThread, isPlaceholder,
 } from '../src/compiler/compile-plan.js';
 import { memoryVariableDef } from '../src/extraction/memory-variable.js';
 import {
@@ -242,6 +242,14 @@ describe('planning and parsing', () => {
         const moved = keepAuthored(mine, { ...mine, title: 'Other', goal: 'x', status: 'resolved', progress: 'Done.', steps: [{ text: 'Niamh agreed', status: 'done' }, { text: 'books found', status: 'done' }], sources: ['m_a'] });
         expect(moved).toMatchObject({ title: 'Supplies', goal: 'Get supplies', status: 'resolved', progress: 'Done.', sources: ['m_a'] });
         expect(moved.steps.map((st) => [st.text, st.status])).toEqual([['Salvage old books from the library', 'done'], ['Win over Niamh', 'done'], ['Trade with Graxx', 'pending']]);
+    });
+
+    it('skips placeholders a model writes for items it keeps as they are', () => {
+        expect(['... (remains the same)', '(unchanged)', 'Unchanged.', '…', 'Same as before'].every(isPlaceholder)).toBe(true);
+        expect(['Remus remains the same man.', 'The gate is unchanged since the war.', 'Lucian works at the gym.'].some(isPlaceholder)).toBe(false);
+        const next = parseCompileOutput([{ id: 'f1', text: 'Lucian works at the gym.' }, { id: 'f1', text: '... (remains the same)' }], [], options);
+        expect(next.facts.map((f) => f.text)).toEqual(['Lucian works at the gym.']);
+        expect(parseThreads([{ id: 't1', title: '(unchanged)', text: '...' }], options)).toEqual(previous.threads);
     });
 
     it('reads tension levels 0..5 and averages them', () => {
@@ -653,7 +661,7 @@ describe('compiling through the independent preset', () => {
         expect(world.independentConfig.promptedHeader).toBe(WORLD_COMPILER_HEADER);
         expect([...world.variables.keys()]).toEqual(['archivist__compiled_threads', 'archivist__compiled_world']);
         for (const name of [COMPILER_PRESET, WORLD_COMPILER_PRESET]) {
-            expect(fake.calls.filter((c) => c.name === 'configureIndependentPreset' && c.args[1] === name).at(-1).args[2]).toMatchObject({ connectionProfileId: 'big', maxTokens: 4000, enabled: true });
+            expect(fake.calls.filter((c) => c.name === 'configureIndependentPreset' && c.args[1] === name).at(-1).args[2]).toMatchObject({ connectionProfileId: 'big', maxTokens: 4000, temperature: 0.3, enabled: true });
         }
     });
 

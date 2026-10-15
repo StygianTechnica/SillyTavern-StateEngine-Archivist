@@ -100,11 +100,14 @@ function renderCatchUp() {
 }
 
 // A number field bound to a setting, kept within [min, max].
-function bindNumber(id, key, min, max) {
+// A number setting's field, clamped to min..max and rounded to `decimals`.
+function bindNumber(id, key, min, max, decimals = 0) {
     const input = byId(id);
     input.value = String(getSettings()[key]);
     input.addEventListener('change', () => {
-        const value = Math.min(max, Math.max(min, Math.round(Number(input.value)) || getSettings()[key]));
+        const typed = Number(input.value);
+        const rounded = Number.isFinite(typed) && input.value.trim() !== '' ? Math.round(typed * 10 ** decimals) / 10 ** decimals : getSettings()[key];
+        const value = Math.min(max, Math.max(min, decimals ? rounded : (rounded || getSettings()[key])));
         getSettings()[key] = value;
         input.value = String(value);
         saveSettings();
@@ -196,6 +199,7 @@ function wireCompiler() {
     bindNumber('ar_compile_interval', 'compileIntervalMinutes', 1, 1440);
     bindNumber('ar_compile_gap', 'compileMinGapMinutes', 0, 1440);
     bindNumber('ar_compiler_tokens', 'compilerMaxTokens', 500, 32000);
+    bindNumber('ar_compiler_temperature', 'compilerTemperature', 0, 2, 2);
     fillConnections('ar_compiler_connection', 'compilerConnectionProfileId');
     const select = byId('ar_compiler_connection');
     select.addEventListener('focus', () => fillConnections('ar_compiler_connection', 'compilerConnectionProfileId'));

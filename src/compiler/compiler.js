@@ -514,6 +514,7 @@ async function compileRun(ref, { rebuild }) {
             enabled: preset.name === COMPILER_PRESET || withWorld,
             connectionProfileId: settings.compilerConnectionProfileId || '',
             maxTokens: Number(settings.compilerMaxTokens) || null,
+            temperature: Number.isFinite(Number(settings.compilerTemperature)) ? Number(settings.compilerTemperature) : null,
             promptedHeader: preset.header,
         });
     }

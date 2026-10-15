@@ -39,6 +39,9 @@ const DEFAULTS = {
     // whole compiled list comes back each run.
     compilerConnectionProfileId: '',
     compilerMaxTokens: 3000,
+    // The compiler's temperature: low, so a small model keeps to the JSON
+    // it is asked for (at 1 it slips - brackets, quotes, elided lists).
+    compilerTemperature: 0.3,
     // Also compile story threads, quests and the world (a second run per
     // batch, through the World Compiler preset).
     compileWorld: true,
