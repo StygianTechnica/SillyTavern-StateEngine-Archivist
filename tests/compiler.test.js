@@ -23,8 +23,9 @@ import { buildDossier, getEntityDossier, getRelationship } from '../src/compiler
 import { similarity, meaningfulCount, shouldCompile } from '../src/compiler/schedule.js';
 import {
     compileOpenChat, getCompiledMemory, getCompilerStatus, checkSchedule, maybeCompile, COMPILER_PRESET, COMPILER_HEADER, COMPILED_CHANGED_EVENT, COMPILE_BATCH,
-    WORLD_COMPILER_PRESET, WORLD_COMPILER_HEADER,
+    WORLD_COMPILER_PRESET, WORLD_COMPILER_HEADER, onCompilerStatus,
 } from '../src/compiler/compiler.js';
+import { onCompileStatus, retryCompile } from '../src/ui/compile-retry.js';
 
 vi.mock('../src/api/state-engine.js', () => import('./harness/state-engine-mock.js'));
 
@@ -692,24 +693,49 @@ describe('compiling through the independent preset', () => {
         const before = memoryRuns().length;
         await compileOpenChat();
         expect(getCompilerStatus()).toMatchObject({ outcome: 'failed', error: 'model down' });
-        // Tried twice before giving up.
-        expect(memoryRuns().length - before).toBe(2);
+        // Never retried on its own.
+        expect(memoryRuns().length - before).toBe(1);
         expect((await getCompiledMemory()).session_details.map((f) => f.text)).toEqual(['compiled m1']);
         expect((await getCompiledMemory()).pending).toBe(1);
     });
 
-    it('runs a part again when its answer could not be read, and goes on', async () => {
-        await store([{ text: 'one', source_message_id: 'Chat A#1@d1' }]);
-        let calls = 0;
-        fake.respond = async (context) => {
-            calls++;
-            if (calls === 1) throw new Error('the answer was not valid JSON');
-            return factsAnswer(context);
-        };
-        await compileOpenChat();
-        expect(getCompilerStatus()).toMatchObject({ outcome: 'compiled', error: null });
-        expect(memoryRuns()).toHaveLength(2);
-        expect((await getCompiledMemory()).session_details.map((f) => f.text)).toEqual(['compiled m1']);
+    it('offers a retry when a compile stops, once, and resumes on a click', async () => {
+        const toastr = { warning: vi.fn(() => ({ id: 'toast' })), info: vi.fn(), clear: vi.fn() };
+        globalThis.toastr = toastr;
+        const stop = onCompilerStatus(onCompileStatus);
+        try {
+            await store(Array.from({ length: COMPILE_BATCH + 1 }, (_, i) => ({ text: `memory ${i}`, source_message_id: 'Chat A#1@d1' })));
+            let calls = 0;
+            fake.respond = async (context) => {
+                calls++;
+                // The second batch's memory part (each batch runs memory, then world).
+                if (calls === 3) throw new Error('the answer was not valid JSON');
+                return factsAnswer(context);
+            };
+            await compileOpenChat({ rebuild: true });
+            expect(getCompilerStatus()).toMatchObject({ outcome: 'failed', error: 'the answer was not valid JSON' });
+            expect(toastr.warning).toHaveBeenCalledTimes(1);
+            const [message, title, options] = toastr.warning.mock.calls[0];
+            expect(message).toBe('The compiler stopped: the answer was not valid JSON. What it finished is saved. Click here to try again.');
+            expect(title).toBe('Archivist');
+            expect(options).toMatchObject({ timeOut: 0, closeButton: true, escapeHtml: true });
+            expect((await getCompiledMemory()).pending).toBe(1);
+
+            // The click: a plain compile of what is left, not a rebuild.
+            await options.onclick();
+            expect(toastr.clear).toHaveBeenCalled();
+            expect(getCompilerStatus()).toMatchObject({ outcome: 'compiled', reason: 'retry', rebuild: false });
+            expect((await getCompiledMemory()).pending).toBe(0);
+            expect(toastr.warning).toHaveBeenCalledTimes(1);
+        } finally {
+            stop();
+        }
+    });
+
+    it('sends a retry for another chat back to that chat', async () => {
+        globalThis.toastr = { info: vi.fn(), clear: vi.fn() };
+        expect(await retryCompile({ chatKey: 'elsewhere', chatId: 'Chat B' })).toBe(false);
+        expect(toastr.info).toHaveBeenCalledWith('Open "Chat B" and compile it from the Archivist drawer to try again.', 'Archivist');
     });
 
     it('returns null for a chat never compiled, and loses the file with the chat\'s memories', async () => {

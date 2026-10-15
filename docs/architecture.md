@@ -295,7 +295,9 @@ local refs), in batches of 20 (`COMPILE_BATCH`), and taking back the complete up
 refs back to memory ids, resolves entity names to State Engine object ids,
 and refuses an answer that would drop every fact (the previous state is
 kept). Rebuild starts from an empty state. The state is saved after every
-batch.
+batch. A run that fails stops there - never retried on its own; a toast
+says so and offers a retry on a click (`src/ui/compile-retry.js`), a plain
+compile that goes on from the last saved batch, even after a Rebuild.
 
 A state compiled before the world compiler (no `schema`, read as 1) still
 works; its view is flagged `outdated` - a Rebuild fills in insights, threads

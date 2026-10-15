@@ -468,24 +468,17 @@ async function readAndClear(chatId, presetName, name) {
     return Array.isArray(value) ? value : [];
 }
 
-// How many times a part is run before its failure fails the compile: a
-// small model's answer that can't be read (broken JSON) is often fine the
-// next time.
-export const PART_ATTEMPTS = 2;
-
 // Runs one part's preset with `context`; resolves to its variables'
-// answers, by variable name. Throws when every attempt failed and wrote
-// nothing.
+// answers, by variable name. Throws when the run failed and wrote nothing -
+// the compile stops there, and the user is offered a retry
+// (src/ui/compile-retry.js), never retried on its own.
 async function runPart(presetName, variables, context, chatId) {
     await updateIndependentPresetContext(presetName, context);
-    for (let attempt = 1; ; attempt++) {
-        const { ok, error } = await runIndependent(presetName, chatId);
-        const answers = {};
-        for (const name of variables) answers[name] = await readAndClear(chatId, presetName, name);
-        if (ok || Object.values(answers).some((a) => a.length > 0)) return answers;
-        if (attempt >= PART_ATTEMPTS) throw new Error(error);
-        console.warn(LOG_PREFIX, `${presetName} wrote nothing (${error}) - running it again`);
-    }
+    const { ok, error } = await runIndependent(presetName, chatId);
+    const answers = {};
+    for (const name of variables) answers[name] = await readAndClear(chatId, presetName, name);
+    if (!ok && Object.values(answers).every((a) => a.length === 0)) throw new Error(error);
+    return answers;
 }
 
 async function compileRun(ref, { rebuild }) {
