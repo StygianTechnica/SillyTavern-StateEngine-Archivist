@@ -37,6 +37,7 @@ import { getCurrentChatRef } from '../memory/registry.js';
 import { MEMORY_VARIABLE, memoryVariableDef } from './memory-variable.js';
 import { convertExtractedItems, createEntityResolver } from './converter.js';
 import { mentionMatcherFor } from '../memory/object-mentions.js';
+import { retryMissedReplies } from './missed-replies.js';
 import { sourceMessageId, lastReplyIndex } from './messages.js';
 import { rememberExtracted } from '../memory/message-fingerprints.js';
 import { CONTEXT_BLOCKS, contextVariableDef } from '../context/prompt-context.js';
@@ -280,5 +281,7 @@ export async function startLiveExtraction() {
         if (getSettings().enabled) void harvest(chatId);
     });
     eventSource.on(eventTypes.CHAT_CHANGED, () => void syncAndRecord());
+    // A new reply: the ones before it whose extraction failed are read again.
+    if (eventTypes.MESSAGE_RECEIVED) eventSource.on(eventTypes.MESSAGE_RECEIVED, () => void retryMissedReplies());
     await repairLiveExtraction();
 }

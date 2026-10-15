@@ -311,3 +311,58 @@ describe('rebuilding the memories from the chat', () => {
         expect(rebuildMessagesLeft('char:alice.png:Chat A')).toBe(4);
     });
 });
+
+describe('replies live extraction missed', () => {
+    let fake;
+    beforeEach(async () => {
+        fake = resetFakeStateEngine();
+        getContext().chat = chatOf(10);
+        Object.assign(getSettings(), { enabled: true, chunkSize: 2 });
+        await loadCurrentChat();
+        fake.respond = async (context) => {
+            const [index] = [...context.matchAll(/\[#(\d+)\]/g)].map((m) => Number(m[1]));
+            return [{ text: `again ${index}`, message_index: index }];
+        };
+    });
+
+    it('finds the replies before the newest that have no memories and were not tried', async () => {
+        const { missedReplies } = await import('../src/extraction/missed-replies.js');
+        const chat = chatOf(14);
+        const records = [rec('C', 9, chat), rec('C', 5, chat)];
+        // Replies are the odd messages; 13 is the newest. Five before it: 11, 9, 7, 5, 3.
+        expect(missedReplies(chat, records, 'C')).toEqual([3, 7, 11]);
+        expect(missedReplies(chat, records, 'C', new Set([sourceMessageId('C', 7, chat[7])]))).toEqual([3, 11]);
+    });
+
+    it('reads a missed reply again through the catch-up preset - once', async () => {
+        const { retryMissedReplies } = await import('../src/extraction/missed-replies.js');
+        await addMemoryRecords(getCurrentChatRef(), [1, 3, 5].map((i) => ({ text: `live ${i}`, source_message_id: sourceMessageId('Chat A', i, getContext().chat[i]) })));
+        await retryMissedReplies();
+        expect((await getAllMemories()).map((m) => m.text)).toEqual(['live 1', 'live 3', 'live 5', 'again 7']);
+        expect(getChatEntry('char:alice.png:Chat A').liveRetried).toEqual(['Chat A#7@d7']);
+
+        // Tried once: a reply that still gets nothing is left alone.
+        fake.respond = async () => [];
+        getContext().chat.push(msg(10), msg(11));
+        await retryMissedReplies();
+        expect((await getAllMemories()).map((m) => m.text)).toEqual(['live 1', 'live 3', 'live 5', 'again 7']);
+        expect(getChatEntry('char:alice.png:Chat A').liveRetried).toEqual(['Chat A#7@d7', 'Chat A#9@d9']);
+        const runs = fake.calls.filter((c) => c.name === 'runIndependentPreset').length;
+        await retryMissedReplies();
+        expect(fake.calls.filter((c) => c.name === 'runIndependentPreset').length).toBe(runs);
+    });
+
+    it('records a failed chunk with its messages and why', async () => {
+        fake.respond = async (context) => {
+            if (context.includes('[#2]')) throw new Error('response was not valid JSON');
+            return [{ text: 'ok' }];
+        };
+        const done = [];
+        await startCatchUp({ whenDone: (p) => done.push(p) });
+        await done[0];
+        expect(getCatchUpProgress().failures).toEqual([{ from: 2, to: 3, error: 'response was not valid JSON', response: null }]);
+        const { failuresReport, failedRanges } = await import('../src/ui/drawer-model.js');
+        expect(failedRanges(getCatchUpProgress())).toBe('#2-#3');
+        expect(failuresReport(getCatchUpProgress())).toBe('Messages #2-#3: response was not valid JSON\n(the response was not kept)');
+    });
+});

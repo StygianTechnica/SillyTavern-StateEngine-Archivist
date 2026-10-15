@@ -99,14 +99,16 @@ export async function ensureCatchUpPreset() {
 
 // The current (or last) pass, for the drawer:
 // { running, chatKey, chatId, displayName, done, total, messages, stored,
-//   failedChunks, lastError, outcome: null | 'completed' | 'cancelled' |
-//   'failed' | 'nothing', startedAt, finishedAt }
+//   failedChunks, failures: [{ from, to, error, response }] (each failed
+//   chunk: its first and last message, why, and what the model wrote when
+//   it could not be read), lastError, outcome: null | 'completed' |
+//   'cancelled' | 'failed' | 'nothing', startedAt, finishedAt }
 let progress = null;
 let cancelRequested = false;
 const progressListeners = new Set();
 
 export function getCatchUpProgress() {
-    return progress ? { ...progress } : null;
+    return progress ? { ...progress, failures: [...(progress.failures ?? [])] } : null;
 }
 
 export function onCatchUpProgress(listener) {
@@ -178,12 +180,12 @@ async function preparePreset() {
 async function extractChunk(ref, chat, chunk, records, resolveEntity, mentionsIn, { replace = false } = {}) {
     return withPreset(async () => {
         await updateIndependentPresetContext(CATCH_UP_PRESET, chunkContext(chat, chunk, carryOver(records, chunk[0])));
-        const { ok, error } = await runChunk(ref.chatId);
+        const { ok, error, response } = await runChunk(ref.chatId);
 
         const value = await getVariableValue(ref.chatId, CATCH_UP_MEMORY_VARIABLE);
         const items = Array.isArray(value) ? value : [];
         if (items.length) await setVariableValue(ref.chatId, CATCH_UP_PRESET, CATCH_UP_MEMORY_VARIABLE, []);
-        if (!ok && items.length === 0) return { ok: false, error, added: [] };
+        if (!ok && items.length === 0) return { ok: false, error, response, added: [], removed: [] };
 
         const fields = await convertExtractedItems(items, {
             resolveEntity,
@@ -226,11 +228,12 @@ async function runPass(ref, chat, { rebuild = false } = {}) {
     for (let k = 0; k < chunks.length; k++) {
         if (cancelRequested) return 'cancelled';
         const chunk = chunks[k];
-        const { ok, error, added, removed } = await extractChunk(ref, chat, chunk, records, resolveEntity, mentionsIn, { replace: rebuild });
+        const { ok, error, response, added, removed } = await extractChunk(ref, chat, chunk, records, resolveEntity, mentionsIn, { replace: rebuild });
         if (!ok) {
             contiguous = false;
-            update({ failedChunks: progress.failedChunks + 1, lastError: error });
-            console.warn(LOG_PREFIX, `catch-up chunk ${k + 1} of ${chunks.length} failed: ${error}`);
+            const failure = { from: chunk[0], to: chunk[chunk.length - 1], error, response: response ?? null };
+            update({ failedChunks: progress.failedChunks + 1, lastError: error, failures: [...progress.failures, failure] });
+            console.warn(LOG_PREFIX, `${rebuild ? 'memory rebuild' : 'catch-up'} chunk ${k + 1} of ${chunks.length} (messages #${failure.from}-#${failure.to}) failed: ${error}`, response ?? '');
         } else {
             const gone = new Set(removed);
             records = records.filter((r) => !gone.has(r.id)).concat(added);
@@ -312,7 +315,7 @@ export async function reextractMessage(ref, chat, index) {
     if (!chat?.[index] || chat[index].is_system || !String(chat[index].mes ?? '').trim()) return [];
     await preparePreset();
     const records = await getAllMemories(chatKeyFor(ref));
-    const { ok, error, added } = await extractChunk(ref, chat, [index], records, await entityResolverFor(ref.chatId));
+    const { ok, error, added } = await extractChunk(ref, chat, [index], records, await entityResolverFor(ref.chatId), await mentionMatcherFor(ref.chatId));
     if (!ok) throw new Error(error);
     return added;
 }
@@ -331,7 +334,7 @@ export async function startCatchUp({ whenDone, rebuild = false } = {}) {
     cancelRequested = false;
     progress = {
         running: true, cancelling: false, rebuild, compileStarted: false, chatKey: chatKeyFor(ref), chatId: ref.chatId, displayName: ref.displayName,
-        done: 0, total: 0, messages: 0, stored: 0, failedChunks: 0, lastError: null, outcome: null,
+        done: 0, total: 0, messages: 0, stored: 0, failedChunks: 0, failures: [], lastError: null, outcome: null,
         startedAt: new Date().toISOString(), finishedAt: null,
     };
     update({});

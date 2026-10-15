@@ -54,6 +54,21 @@ export function lastHarvestLine(last, enabled) {
 
 // The catch-up status line, from getCatchUpProgress()
 // (src/extraction/catch-up.js), as seen from the open chat: { text, error }.
+// The failed chunks of a pass as message ranges: "#40-#49, #120-#129".
+export function failedRanges(progress) {
+    return (progress?.failures ?? []).map((f) => (f.from === f.to ? `#${f.from}` : `#${f.from}-#${f.to}`)).join(', ');
+}
+
+// The failed chunks of a pass as text to copy and send on: each one's
+// messages, why it failed, and what the model wrote when it could not be
+// read.
+export function failuresReport(progress) {
+    return (progress?.failures ?? []).map((f) => [
+        `Messages ${f.from === f.to ? `#${f.from}` : `#${f.from}-#${f.to}`}: ${f.error}`,
+        f.response ?? '(the response was not kept)',
+    ].join('\n')).join('\n\n-----\n\n');
+}
+
 // A memory rebuild's line (catch-up.js startCatchUp({ rebuild: true })).
 export function rebuildLine(progress, openChatKey) {
     if (!progress) return { text: '', error: false };
@@ -74,7 +89,7 @@ export function rebuildLine(progress, openChatKey) {
             return { text: `The memory rebuild failed${where}: ${progress.lastError || 'see the browser console'}. The old memories are kept.`, error: true };
         default: {
             const failed = progress.failedChunks
-                ? ` ${progress.failedChunks} of ${progress.total} chunks failed (${progress.lastError}) and kept their old memories - Continue retries only those, then recompiles.`
+                ? ` ${progress.failedChunks} of ${progress.total} chunks failed (messages ${failedRanges(progress)}: ${progress.lastError}) and kept their old memories - Continue retries only those, then recompiles.`
                 : '';
             const compile = progress.compileStarted ? ' Recompiling them now.' : '';
             return { text: `Memories rebuilt${where}: ${many(progress.stored)} from ${progress.messages} messages.${failed}${compile}`, error: progress.failedChunks > 0 };
@@ -102,7 +117,7 @@ export function catchUpLine(progress, openChatKey) {
             return { text: `Catch-up failed${where}: ${progress.lastError || 'see the browser console'}.`, error: true };
         default: {
             const failed = progress.failedChunks
-                ? ` ${progress.failedChunks} of ${progress.total} chunks failed (${progress.lastError}) - run it again to retry them.`
+                ? ` ${progress.failedChunks} of ${progress.total} chunks failed (messages ${failedRanges(progress)}: ${progress.lastError}) - run it again to retry them.`
                 : '';
             return { text: `Done${where}: ${many(progress.stored)} stored from ${progress.messages} messages.${failed}`, error: progress.failedChunks > 0 };
         }

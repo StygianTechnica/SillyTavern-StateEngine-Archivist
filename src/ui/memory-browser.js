@@ -33,7 +33,7 @@ import { findViewItem, editValues, buildEditForm, itemButtons } from './compiled
 import { getChatPhraseTics, removePhraseTic, PHRASE_TICS_CHANGED_EVENT } from '../compiler/phrase-tic-tracker.js';
 import { WARN_AT } from '../compiler/phrase-tics.js';
 import { currentStep, TENSION_AXES, TENSION_MAX } from '../compiler/compiled-schema.js';
-import { compilerLine, rebuildLine } from './drawer-model.js';
+import { compilerLine, rebuildLine, failuresReport } from './drawer-model.js';
 import { startCatchUp, cancelCatchUp, getCatchUpProgress, onCatchUpProgress, isCatchUpRunning, rebuildMessagesLeft } from '../extraction/catch-up.js';
 import { jumpToMessage } from './chat-jump.js';
 
@@ -264,6 +264,20 @@ function renderRebuild() {
     const { text, error } = showLine ? rebuildLine(progress, openChatKey()) : { text: '', error: false };
     line.textContent = text;
     line.classList.toggle('ar-mb-error', error);
+    // What the failed chunks' model wrote - to paste wherever it helps.
+    part('copyFailures').hidden = !(progress?.failures?.length && progress.chatKey === state.selectedKey);
+}
+
+async function copyFailures() {
+    const report = failuresReport(getCatchUpProgress());
+    if (!report) return;
+    try {
+        await navigator.clipboard.writeText(report);
+        toastr.success('The failed chunks\' responses are copied.', 'Archivist');
+    } catch (err) {
+        console.warn(LOG_PREFIX, 'could not copy the failed responses', err, report);
+        toastr.error('They could not be copied - they are in the browser console.', 'Archivist');
+    }
 }
 
 async function rebuildMemories() {
@@ -965,6 +979,10 @@ function onClick(e) {
         void rebuildMemories();
         return;
     }
+    if (e.target.closest('[data-mb="copyFailures"]')) {
+        void copyFailures();
+        return;
+    }
     if (e.target.closest('[data-mb="refresh"]')) void loadChats();
 }
 
@@ -1027,6 +1045,7 @@ function build() {
                         <button type="button" class="menu_button menu_button_icon" data-mb="deleteSelected"><i class="fa-solid fa-trash-can"></i><span>Delete selected</span></button>
                         <button type="button" class="menu_button menu_button_icon ar-mb-danger" data-mb="deleteChat" title="Delete every memory stored for this chat"><i class="fa-solid fa-dumpster"></i><span>Delete all for this chat</span></button>
                         <button type="button" class="menu_button menu_button_icon" data-mb="rebuildMemories"><i class="fa-solid fa-book-open-reader"></i><span>Rebuild memories from chat</span></button>
+                        <button type="button" class="menu_button menu_button_icon" data-mb="copyFailures" title="Copy each failed chunk's messages, error and what the model wrote" hidden><i class="fa-solid fa-copy"></i><span>Copy failed responses</span></button>
                         <small class="ar-mb-rebuild-status" data-mb="rebuildStatus"></small>
                     </div>
                 </div>

@@ -126,6 +126,17 @@ the current extraction, through the catch-up preset and its settings:
   (story threads you wrote yourself are kept). Automatic compiles wait until
   then.
 - Memories you deleted may come back - they are found again in the messages.
+- A chunk that fails is named by its messages (*chunks failed (messages
+  #40-#49: response was not valid JSON)*), and **Copy failed responses**
+  copies what the model wrote for each, to look at or send on.
+
+### Replies whose extraction failed
+
+Live extraction rides State Engine's per-message update - when that update
+fails, the reply gets no memories. So each time a new reply arrives,
+Archivist checks the five replies before it: one still without memories is
+read again through the catch-up preset, in the background. Each reply is
+tried once - one with nothing worth remembering is left alone.
 
 ### The compiler: characters, relationships, threads, the world, timeline
 
