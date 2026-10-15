@@ -491,7 +491,63 @@ export function parseThreads(rawThreads, { previous, refs, resolve }) {
             sources: [...new Set([...(previousById.get(id)?.sources ?? []), ...sourceIdsOf(raw.sources, refs)])],
         });
     }
-    return carriedForward(threads, previous.threads, (t) => t.id);
+    return withoutDuplicateThreads(carriedForward(threads, previous.threads, (t) => t.id), new Set(threads.map((t) => t.id)));
+}
+
+// Small models copy a thread under a new id ("Understand Remus' Departure",
+// "Understanding Remus' Departure Implications"), and every copy the answer
+// leaves out is kept - so copies pile up. Two threads are the same one when
+// their titles are (looseKey()), or when their titles share most of their
+// words AND their goal and steps nearly match. Each set of copies becomes
+// one thread: the oldest id, every source, and the newest status, progress
+// and steps. Newest: an answered thread (`answeredIds`) over a carried one,
+// then the higher id.
+const stem = (word) => word.slice(0, 6);
+const stems = (value) => new Set(titleWords(value).map(stem));
+const sharedCount = (a, b) => [...a].filter((w) => b.has(w)).length;
+const planStems = (t) => stems([t.goal, ...(t.steps ?? []).map((s) => s.text)].join(' '));
+// Share of the plans' words they have in common (0 when either has none).
+const DUPLICATE_PLAN_OVERLAP = 0.75;
+
+function sameThread(a, b) {
+    const key = looseKey(a.title);
+    if (key && key === looseKey(b.title)) return true;
+    const [titleA, titleB] = [stems(a.title), stems(b.title)];
+    const shorter = Math.min(titleA.size, titleB.size);
+    const sharedTitle = sharedCount(titleA, titleB);
+    if (shorter === 0 || sharedTitle < Math.min(2, shorter) || sharedTitle < shorter / 2) return false;
+    const [planA, planB] = [planStems(a), planStems(b)];
+    const union = new Set([...planA, ...planB]).size;
+    return planA.size > 0 && planB.size > 0 && sharedCount(planA, planB) / union >= DUPLICATE_PLAN_OVERLAP;
+}
+
+function withoutDuplicateThreads(threads, answeredIds) {
+    const idNumber = (t) => Number(String(t.id).slice(1)) || 0;
+    const newer = (a, b) => (answeredIds.has(b.id) - answeredIds.has(a.id)) || (idNumber(b) - idNumber(a));
+    const groups = [];
+    for (const thread of threads) {
+        const group = groups.find((g) => g.some((other) => sameThread(thread, other)));
+        if (group) group.push(thread);
+        else groups.push([thread]);
+    }
+    return groups.map((group) => {
+        if (group.length === 1) return group[0];
+        const byAge = [...group].sort(newer);
+        const [newest] = byAge;
+        const firstOf = (pick) => byAge.map(pick).find((value) => (Array.isArray(value) ? value.length : value)) ?? pick(newest);
+        const involved = new Map();
+        for (const e of byAge.flatMap((t) => t.involved ?? [])) if (!involved.has(entityKey(e))) involved.set(entityKey(e), e);
+        return {
+            ...newest,
+            id: [...group].sort((a, b) => idNumber(a) - idNumber(b))[0].id,
+            progress: firstOf((t) => t.progress),
+            goal: firstOf((t) => t.goal),
+            steps: firstOf((t) => t.steps),
+            entity: firstOf((t) => t.entity),
+            involved: [...involved.values()],
+            sources: [...new Set(byAge.slice().reverse().flatMap((t) => t.sources ?? []))],
+        };
+    });
 }
 
 // A plan's steps, in the answer's order. A step may come as a plain string.

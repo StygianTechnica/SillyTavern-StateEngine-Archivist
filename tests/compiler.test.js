@@ -308,6 +308,36 @@ describe('planning and parsing', () => {
         expect(world.map((w) => [w.id, w.name])).toEqual([['w2', 'The Liston Library'], ['w1', 'The debt']]);
     });
 
+    it('merges copies of a thread into the oldest one, with the newest status, progress and steps', () => {
+        const plan = (id, title, sources, extra = {}) => ({
+            id, kind: 'quest', title, text: 'x', status: 'open', progress: '', entity: null, involved: [], sources,
+            goal: 'Maintain balance in the Enclave',
+            steps: [{ text: 'Discuss concerns with High Seer Maren', status: 'pending', involved: [], note: '' }, { text: 'Consider ways to adapt to new dynamic', status: 'pending', involved: [], note: '' }],
+            ...extra,
+        });
+        const copies = {
+            ...previous,
+            threads: [
+                previous.threads[0],
+                plan('t2', 'Balancing the Enclave after Remus\' Departure', ['m_2']),
+                plan('t3', 'Balancing the Enclave after Remus\' Departure', ['m_3']),
+                plan('t4', 'Understanding Remus\' Departure Implications', ['m_4']),
+                plan('t5', 'Remus\' Departure Ceremony', ['m_5'], { goal: 'Hold the farewell rite', steps: [{ text: 'Gather the seers at dawn', status: 'pending', involved: [], note: '' }] }),
+                plan('t7', 'Understand Remus\' Departure', ['m_7']),
+            ],
+        };
+        const threads = parseThreads([{
+            id: 't7', kind: 'quest', title: 'Understand Remus\' Departure', text: 'y', status: 'active', progress: 'Spoke with Maren.', sources: ['m1'],
+            steps: [{ text: 'Discuss concerns with High Seer Maren', status: 'done' }, 'Consider ways to adapt to new dynamic'],
+        }], { ...options, previous: copies });
+        expect(threads.map((t) => [t.id, t.title])).toEqual([['t2', 'Understand Remus\' Departure'], ['t1', 'The gym job'], ['t5', 'Remus\' Departure Ceremony']]);
+        expect(threads[0]).toMatchObject({ status: 'active', progress: 'Spoke with Maren.', goal: 'Maintain balance in the Enclave', sources: ['m_2', 'm_3', 'm_4', 'm_7', 'm_a'] });
+        expect(threads[0].steps.map((s) => s.status)).toEqual(['done', 'pending']);
+        // Copies the answer leaves out collapse too; distinct threads stay.
+        expect(parseThreads([], { ...options, previous: copies }).map((t) => t.id)).toEqual(['t1', 't2', 't5']);
+        expect(parseThreads([{ title: 'The gym job', text: 'a' }, { title: 'Gym job dues', text: 'b' }], options).map((t) => t.id)).toEqual(['t1', 't2']);
+    });
+
     it('reads "known only to" as a secret still kept', () => {
         expect(['known only to Varyn', 'hidden', 'not yet revealed', 'known', 'revealed'].map(normalizeSecretStatus)).toEqual(['kept', 'kept', 'kept', 'revealed', 'revealed']);
     });
