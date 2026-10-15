@@ -13,6 +13,7 @@
 import { nameKey } from '../compiler/entity-link.js';
 import { SCENE_WINDOW } from '../compiler/compile-plan.js';
 import { activeTics } from '../compiler/phrase-tics.js';
+import { currentStep } from '../compiler/compiled-schema.js';
 
 // The blocks, in the order a user would usually want them: [local variable
 // name, label, what it holds].
@@ -21,7 +22,7 @@ export const CONTEXT_BLOCKS = Object.freeze([
     ['ctx_scene', 'Current scene', 'The current scene: who is here, its summary, what holds in it now, and what just happened.'],
     ['ctx_scene_characters', 'Characters in the scene', 'Who the characters present are now, their traits, motivations, stressors and feelings.'],
     ['ctx_scene_relationships', 'Relationships in the scene', 'How the characters present (and your persona) relate to each other.'],
-    ['ctx_threads', 'Open threads and quests', 'Plot hooks, unresolved threads and quests still open or active.'],
+    ['ctx_threads', 'Open threads and quests', 'Threads and quests being pursued, and plot hooks and quest seeds involving a character in the scene.'],
     ['ctx_recent_events', 'Recent events', 'The latest events of the story, in order.'],
     ['ctx_secrets', 'Secrets (narrator only)', 'Secrets still kept, and who knows them - knowledge for the narrator, not the characters.'],
     ['ctx_phrase_tics', 'Phrase tics to vary', 'Stock phrases the narration has been repeating lately, with a request to vary the wording for now.'],
@@ -90,6 +91,35 @@ function sceneLines(view, present) {
     return lines.length > (here.length ? 1 : 0) ? lines : [];
 }
 
+// A thread worth telling the model about now: an active one always; an
+// open one (a hook, a quest seed not taken up) only when a character in
+// the scene is involved in it or in one of its steps - with no one but
+// the persona in the scene, every open one. The persona does not count,
+// even when marked present: it is in nearly every thread.
+function threadInPlay(thread, others) {
+    if (thread.status === 'active') return true;
+    if (thread.status !== 'open') return false;
+    if (others.length === 0) return true;
+    const isHere = matcher(others);
+    return [thread.entity, ...(thread.involved ?? []), ...(thread.steps ?? []).flatMap((s) => s.involved ?? [])].some(isHere);
+}
+
+// A thread as one line; a plan adds its goal, the step it is on and the
+// one after.
+export function threadLine(t) {
+    const line = `- [${t.status}] ${t.title} (${t.kind}): ${t.text}${t.progress ? ` Progress: ${t.progress}` : ''}`;
+    const steps = t.steps ?? [];
+    if (!t.goal && !steps.length) return line;
+    const now = currentStep(steps);
+    const at = steps.indexOf(now);
+    const after = now ? steps.slice(at + 1).find((s) => s.status === 'pending') : null;
+    const where = !steps.length ? ''
+        : now ? `Step ${at + 1} of ${steps.length}, now: ${now.text}${now.status === 'failed' ? ' (failed)' : ''}${now.note ? ` (${now.note})` : ''}.`
+            : 'All steps done.';
+    const plan = [t.goal ? `Goal: ${t.goal}.` : '', where, after ? `Then: ${after.text}.` : ''].filter(Boolean).join(' ');
+    return `${line}\n  Plan: ${plan}`;
+}
+
 // The phrase tics in use, as a gentle request for variety - never a ban.
 // No apostrophes anywhere in it: phrases are written without theirs.
 export function phraseTicBlock(tics) {
@@ -112,6 +142,8 @@ export function buildPromptContext(view, { present = [], persona = null, phraseT
     if (!view) return out;
     const isPresent = matcher(present);
     const inPlay = matcher(persona ? [...present, persona] : present);
+    const isPersona = matcher(persona ? [persona] : []);
+    const others = present.filter((p) => !isPersona(p));
 
     if (view.story_summary) out.ctx_story_summary = block('Story so far:', [view.story_summary]);
 
@@ -141,9 +173,9 @@ export function buildPromptContext(view, { present = [], persona = null, phraseT
     out.ctx_scene_relationships = block('Relationships in this scene:', relationshipLines);
 
     const threadLines = (view.threads ?? [])
-        .filter((t) => t.status === 'open' || t.status === 'active')
+        .filter((t) => threadInPlay(t, others))
         .slice(0, MAX_ITEMS)
-        .map((t) => `- [${t.status}] ${t.title} (${t.kind}): ${t.text}${t.progress ? ` Progress: ${t.progress}` : ''}`);
+        .map(threadLine);
     out.ctx_threads = block('Open story threads and quests:', threadLines);
 
     const eventLines = (view.timeline ?? []).slice(-MAX_ITEMS).map((e) => {

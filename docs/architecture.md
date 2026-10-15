@@ -251,7 +251,7 @@ record lists, read and cleared after each run:
 
 | Preset                        | Lists                                                        |
 |-------------------------------|--------------------------------------------------------------|
-| **Archivist Memory Compiler** | `compiled_facts`, `compiled_relationships`, `compiled_characters` |
+| **Archivist Memory Compiler** | `compiled_facts`, `compiled_relationships`, `compiled_characters`, `compiled_tension` |
 | **Archivist World Compiler**  | `compiled_threads`, `compiled_world`                         |
 
 Two presets, so each prompt shows only the lists its part updates and each
@@ -344,7 +344,10 @@ asked for them.
 `buildPromptContext()` builds the texts from the compiled view, focused on
 who is in play: the characters State Engine marks present (else those the
 newest scene memories name) and the user's persona, matched by id or name
-words (`entity-link.js` `nameKey`). `syncPromptContext()` rebuilds them,
+words (`entity-link.js` `nameKey`). Threads are filtered the same way: an
+active thread is always given, an open one (a plot hook, a quest seed) only
+when a character in the scene is involved in it or one of its plan steps;
+a plan shows its goal, the step it is on and the next. `syncPromptContext()` rebuilds them,
 debounced, after memories change, after a compile, on a chat change and on
 State Engine's variables-changed event, and writes only the blocks whose
 text changed - so its own writes, which State Engine announces as a change
@@ -357,6 +360,17 @@ keeps; `sceneAt` records the newest message the scene summary was written
 from). The view's Scene adds `scene_recent` - the scene-scope memories of
 the newest `SCENE_WINDOW` messages, from the memories themselves, since the
 model rarely classes a fact SCENE.
+
+Story tension: the memory part also answers `compiled_tension`, one reading
+of the story's tension at the batch's newest memories - threat,
+uncertainty and emotional, each 0..5, and a reason. `parseTension()` adds it
+to `compiled.tension` with its overall (the average of the three) and the
+batch's newest message and memory; a reading at the same message as the
+last one replaces it. The model sees the last `TENSION_CONTEXT` readings,
+so it keeps to one scale. The series is one point per compile batch - a
+graph of the story's tension (the memory browser draws one), and something
+pacing can read later. A Rebuild starts the series over, one point per
+`COMPILE_BATCH` memories, so a rebuilt series is coarser than a live one.
 
 The Current scene block is about NOW: who is present, the scene summary only
 while it was written from the newest `SCENE_WINDOW` messages, SCENE facts

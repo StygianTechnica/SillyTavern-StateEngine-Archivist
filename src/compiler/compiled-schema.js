@@ -109,6 +109,70 @@ export function normalizeThreadStatus(value) {
     return 'open';
 }
 
+// A plan's step (a thread's `steps`, in order): pending (not reached yet),
+// active (being done now), done, skipped (the plan changed around it) or
+// failed. Anything unknown is pending.
+export const STEP_STATUSES = Object.freeze(['pending', 'active', 'done', 'skipped', 'failed']);
+
+export function normalizeStepStatus(value) {
+    const token = String(value ?? '').trim().toLowerCase().replace(/[\s_-]+/g, ' ');
+    if (STEP_STATUSES.includes(token)) return token;
+    if (/^(in progress|ongoing|current|underway|started)/.test(token)) return 'active';
+    if (/^(complete|finished|resolved|achieved|succeeded)/.test(token)) return 'done';
+    if (/^(dropped|abandoned|cancel|bypass|unneeded|not needed)/.test(token)) return 'skipped';
+    if (/^(fail|botched|lost)/.test(token)) return 'failed';
+    return 'pending';
+}
+
+// A plan's steps as the user edits them: a line per step,
+// "[status] what is to be done | note" (status and note optional).
+export function stepsToText(steps) {
+    return (steps ?? []).map((s) => `[${s.status}] ${s.text}${s.note ? ` | ${s.note}` : ''}`).join('\n');
+}
+
+// stepsToText() read back: [{ text, status, note }] in order, blank lines
+// left out; a line without a [status] is pending.
+export function stepsFromText(value) {
+    return String(value ?? '').split('\n').map((line) => line.trim()).filter(Boolean).map((line) => {
+        const [, status = '', rest] = line.match(/^(?:\[([^\]]*)\]\s*)?(.*)$/);
+        const bar = rest.indexOf('|');
+        return {
+            text: (bar === -1 ? rest : rest.slice(0, bar)).trim(),
+            status: normalizeStepStatus(status),
+            note: bar === -1 ? '' : rest.slice(bar + 1).trim(),
+        };
+    }).filter((s) => s.text);
+}
+
+// The step a plan is on: the first not done or skipped (null when none is
+// left, or there are no steps).
+export function currentStep(steps) {
+    return (steps ?? []).find((s) => s.status !== 'done' && s.status !== 'skipped') ?? null;
+}
+
+// ---- story tension
+
+// How tense the story is at a point, on three axes, each 0 (none) to
+// TENSION_MAX: threat (danger, conflict, stakes), uncertainty (unknowns,
+// suspense, open questions) and emotional (strain, grief, longing,
+// confrontation). The overall tension is their average.
+export const TENSION_AXES = Object.freeze(['threat', 'uncertainty', 'emotional']);
+export const TENSION_MAX = 5;
+
+// A level 0..TENSION_MAX ("4", 4.4, "4/5" -> 4), or null when it is not a
+// number.
+export function normalizeTensionLevel(value) {
+    const n = typeof value === 'number' ? value : parseFloat(String(value ?? ''));
+    if (!Number.isFinite(n)) return null;
+    return Math.min(TENSION_MAX, Math.max(0, Math.round(n)));
+}
+
+// The average of a reading's axes, to one decimal.
+export function tensionOverall(reading) {
+    const sum = TENSION_AXES.reduce((total, axis) => total + (reading?.[axis] ?? 0), 0);
+    return Math.round((sum / TENSION_AXES.length) * 10) / 10;
+}
+
 // ---- the world
 
 // A secret is kept (still hidden), revealed (those it was hidden from know

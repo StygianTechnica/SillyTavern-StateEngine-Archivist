@@ -488,6 +488,19 @@
 .ar-mb-thread-resolved,
 .ar-mb-thread-abandoned { opacity: 0.6; }
 
+.ar-mb-steps {
+    margin: 4px 0 0;
+    padding-left: 1.6em;
+    font-size: 0.9em;
+}
+
+.ar-mb-step-done,
+.ar-mb-step-skipped { opacity: 0.6; }
+.ar-mb-step-skipped > span:not(.ar-mb-step-note) { text-decoration: line-through; }
+.ar-mb-step-failed > i { color: #e05555; }
+.ar-mb-step-current { font-weight: bold; }
+.ar-mb-step-note { font-weight: normal; opacity: 0.75; }
+
 .ar-mb-major {
     border-left-color: #e05555;
 }
@@ -558,4 +571,37 @@
 .ar-mb-edit-buttons {
     display: flex;
     gap: 6px;
+}
+
+.ar-mb-tension-graph {
+    display: block;
+    width: 100%;
+    height: auto;
+    max-height: 200px;
+    margin-top: 6px;
+}
+
+.ar-mb-tension-grid { stroke: currentColor; stroke-opacity: 0.12; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.ar-mb-tension-line { fill: none; stroke-width: 1.5; stroke-opacity: 0.55; vector-effect: non-scaling-stroke; }
+.ar-mb-tension-line.ar-mb-tension-overall { stroke-width: 2.5; stroke-opacity: 1; }
+.ar-mb-tension-dot { fill: currentColor; }
+.ar-mb-tension-overall { --ar-tension: currentColor; stroke: currentColor; }
+.ar-mb-tension-threat { --ar-tension: #e05555; stroke: #e05555; }
+.ar-mb-tension-uncertainty { --ar-tension: #d4b03c; stroke: #d4b03c; }
+.ar-mb-tension-emotional { --ar-tension: #4a90d9; stroke: #4a90d9; }
+
+.ar-mb-tension-key::before {
+    content: '';
+    display: inline-block;
+    width: 10px;
+    height: 3px;
+    margin: 0 4px 3px 0;
+    background: var(--ar-tension);
+}
+
+.ar-mb-tension-key + .ar-mb-tension-key { margin-left: 10px; }
+
+.ar-mb-tension-scale {
+    display: flex;
+    justify-content: space-between;
 }

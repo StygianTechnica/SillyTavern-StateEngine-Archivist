@@ -11,11 +11,14 @@ import { getSettings } from '../src/settings.js';
 import { colorTagFor, normalizeClassification, withColorTag, COLOR_TAGS } from '../src/compiler/compiled-schema.js';
 import {
     refsFor, compileContext, worldContext, parseCompileOutput, parseCharacters, parseThreads, parseWorld, changesSince, buildCompiledView, EMPTY_COMPILED,
-    editCompiledItem, removeCompiledItem, editCompiledSummary, compiledItemKey, dismissKey,
+    editCompiledItem, removeCompiledItem, editCompiledSummary, compiledItemKey, dismissKey, parseTension,
 } from '../src/compiler/compile-plan.js';
 import {
     normalizePolarity, polarityLabel, normalizeIntensity, normalizeTrend, normalizeThreadStatus, normalizeWorldKind, normalizeSecretStatus,
+    normalizeStepStatus, stepsToText, stepsFromText, currentStep, normalizeTensionLevel, tensionOverall,
 } from '../src/compiler/compiled-schema.js';
+import { tensionChart } from '../src/ui/memory-browser-model.js';
+import { editValues } from '../src/ui/compiled-edit.js';
 import { buildDossier, getEntityDossier, getRelationship } from '../src/compiler/dossier.js';
 import { similarity, meaningfulCount, shouldCompile } from '../src/compiler/schedule.js';
 import {
@@ -137,6 +140,101 @@ describe('planning and parsing', () => {
         expect(threads.map((t) => [t.id, t.status, t.title])).toEqual([['t1', 'active', 'The gym job'], ['t2', 'open', 'Repeated id'], ['t3', 'open', 'Who broke the window']]);
         expect(threads[0]).toMatchObject({ kind: 'quest', progress: 'He asked the owner.', entity: { id: 'qst_gym', type: 'quest' }, sources: ['m_old', 'm_a'] });
         expect(threads[2]).toMatchObject({ kind: 'unresolved thread', entity: null });
+    });
+
+    it('parses a plan - its goal and steps in order - and keeps its steps when an answer leaves them out', () => {
+        const threads = parseThreads([{
+            kind: 'quest seed', title: 'Supplies from Redhaven', text: 'Varyn\'s plan to equip the expedition.', status: 'open',
+            goal: 'Secure supplies for the wasteland expedition',
+            steps: [
+                { text: 'Salvage old books from the ruined library', status: 'in progress', involved: ['ruined library'], note: 'creatures, Morvath\'s agents' },
+                { text: 'Win over Niamh', involved: 'Niamh, Lucian' },
+                'Barter with Graxx for supplies',
+                { status: 'done' },
+            ],
+        }], options);
+        const plan = threads.find((t) => t.title === 'Supplies from Redhaven');
+        expect(plan.goal).toBe('Secure supplies for the wasteland expedition');
+        expect(plan.steps).toEqual([
+            { text: 'Salvage old books from the ruined library', status: 'active', involved: [{ id: null, name: 'ruined library', type: null }], note: 'creatures, Morvath\'s agents' },
+            { text: 'Win over Niamh', status: 'pending', involved: [{ id: null, name: 'Niamh', type: null }, { id: 'chr_lucian', name: 'Lucian', type: 'character' }], note: '' },
+            { text: 'Barter with Graxx for supplies', status: 'pending', involved: [], note: '' },
+        ]);
+        // t1, compiled before plans, is carried forward as it was; the view gives it none.
+        expect(buildCompiledView({ ...EMPTY_COMPILED, threads: [{ ...previous.threads[0], sources: [] }] }, []).threads[0]).toMatchObject({ goal: '', steps: [] });
+
+        const later = parseThreads([{ id: plan.id, title: 'Supplies from Redhaven', text: 'x', status: 'active' }], { ...options, previous: { ...previous, threads } });
+        expect(later.find((t) => t.id === plan.id)).toMatchObject({ goal: plan.goal, steps: plan.steps, status: 'active' });
+        expect(worldContext({ ...previous, threads }, [], () => null)).toContain([
+            '    goal: Secure supplies for the wasteland expedition',
+            '    1. [active] Salvage old books from the ruined library (creatures, Morvath\'s agents)',
+            '    2. [pending] Win over Niamh',
+        ].join('\n'));
+    });
+
+    it('reads step statuses, finds the current step, and edits steps as lines', () => {
+        expect(['done', 'Completed', 'current', 'abandoned', 'failed', '?'].map(normalizeStepStatus)).toEqual(['done', 'done', 'active', 'skipped', 'failed', 'pending']);
+        const steps = [{ text: 'a', status: 'done' }, { text: 'b', status: 'skipped' }, { text: 'c', status: 'pending' }];
+        expect(currentStep(steps).text).toBe('c');
+        expect(currentStep(steps.slice(0, 2))).toBeNull();
+        expect(currentStep(undefined)).toBeNull();
+        const lines = stepsToText([{ text: 'Get books', status: 'done', note: '' }, { text: 'Win over Niamh', status: 'pending', note: 'she wants a price' }]);
+        expect(lines).toBe('[done] Get books\n[pending] Win over Niamh | she wants a price');
+        expect(stepsFromText(`${lines}\n\n  Trade with Graxx  \n[finished]`)).toEqual([
+            { text: 'Get books', status: 'done', note: '' },
+            { text: 'Win over Niamh', status: 'pending', note: 'she wants a price' },
+            { text: 'Trade with Graxx', status: 'pending', note: '' },
+        ]);
+
+        const niamh = { id: 'chr_niamh', name: 'Niamh', type: 'character' };
+        const withPlan = { ...previous, threads: [{ ...previous.threads[0], goal: 'g', steps: [{ text: 'Get books', status: 'active', involved: [], note: '' }, { text: 'Win over Niamh', status: 'pending', involved: [niamh], note: '' }] }] };
+        expect(editValues('thread', withPlan.threads[0])).toMatchObject({ goal: 'g', steps: '[active] Get books\n[pending] Win over Niamh' });
+        const edited = editCompiledItem(withPlan, 'thread', 't1', { goal: 'Supplies', steps: '[done] Get books\n[active] Win over Niamh | bring wine' });
+        expect(edited.threads[0].goal).toBe('Supplies');
+        expect(edited.threads[0].steps).toEqual([
+            { text: 'Get books', status: 'done', involved: [], note: '' },
+            { text: 'Win over Niamh', status: 'active', involved: [niamh], note: 'bring wine' },
+        ]);
+    });
+
+    it('reads tension levels 0..5 and averages them', () => {
+        expect([3, '4', '4/5', 4.6, 9, -2, 'high', null].map(normalizeTensionLevel)).toEqual([3, 4, 4, 5, 5, 0, null, null]);
+        expect(tensionOverall({ threat: 4, uncertainty: 2, emotional: 3 })).toBe(3);
+        expect(tensionOverall({ threat: 5, uncertainty: 1, emotional: 1 })).toBe(2.3);
+    });
+
+    it('adds a tension reading per batch, at its newest message, replacing one at the same message', () => {
+        const first = parseTension([{ threat: '4', uncertainty: 2, emotional: 3, reason: ' Graxx is ruthless. ' }], [], batch);
+        expect(first).toEqual([{ at: 13, memory_id: 'm_b', threat: 4, uncertainty: 2, emotional: 3, overall: 3, reason: 'Graxx is ruthless.' }]);
+        const again = parseTension([{ threat: 1, uncertainty: 1, emotional: 1 }], first, batch);
+        expect(again).toEqual([{ at: 13, memory_id: 'm_b', threat: 1, uncertainty: 1, emotional: 1, overall: 1, reason: '' }]);
+        const later = parseTension([{ threat: 5, uncertainty: 5, emotional: 2 }], first, [rec('m_c', { at: 20 })]);
+        expect(later.map((t) => [t.at, t.overall])).toEqual([[13, 3], [20, 4]]);
+        // An answer missing a level, or none at all, adds nothing.
+        expect(parseTension([{ threat: 3, uncertainty: 2 }], first, batch)).toBe(first);
+        expect(parseTension([], first, batch)).toBe(first);
+        expect(parseTension(undefined, undefined, batch)).toEqual([]);
+
+        expect(compileContext({ ...previous, tension: [] }, batch)).toContain('Story tension so far: (none yet)');
+        expect(compileContext({ ...previous, tension: later }, batch)).toContain([
+            'Story tension so far (latest readings, oldest first):',
+            '- at message #13: threat 4, uncertainty 2, emotional 3 (overall 3) - Graxx is ruthless.',
+            '- at message #20: threat 5, uncertainty 5, emotional 2 (overall 4)',
+        ].join('\n'));
+    });
+
+    it('lays the tension readings out as a graph', () => {
+        expect(tensionChart([])).toBeNull();
+        const chart = tensionChart([
+            { message_index: 30, threat: 5, uncertainty: 5, emotional: 5, overall: 5 },
+            { message_index: 10, threat: 0, uncertainty: 0, emotional: 0, overall: 0 },
+            { message_index: 20, threat: 3, uncertainty: 0, emotional: 0, overall: 1 },
+        ], { width: 100, height: 50, max: 5 });
+        expect(chart.lines.overall).toBe('0,50 50,40 100,0');
+        expect(chart.lines.threat).toBe('0,50 50,20 100,0');
+        expect([chart.from, chart.to]).toEqual([10, 30]);
+        expect(tensionChart([{ overall: 2 }, { message_index: 4, overall: 4 }], { width: 100, height: 50 })).toMatchObject({ lines: { overall: '0,30 100,10' }, from: null, to: null });
+        expect(tensionChart([{ message_index: 4, overall: 4 }], { width: 100, height: 50 }).lines.overall).toBe('50,10');
     });
 
     it('parses world entries by kind, with who knows a secret', () => {
@@ -436,6 +534,7 @@ describe('compiling through the independent preset', () => {
             archivist__compiled_world: [{ id: 'w1', kind: 'location', name: 'The gym', text: 'Where Lucian works.', sources: refs.slice(0, 1) }],
             archivist__compiled_story_summary: refs.length ? `Lucian worked through ${refs.length} memories.` : '',
             archivist__compiled_scene_summary: '',
+            archivist__compiled_tension: refs.length ? [{ threat: 2, uncertainty: 3, emotional: 4, reason: 'Lucian is stretched thin.' }] : [],
         };
     };
 
@@ -456,6 +555,7 @@ describe('compiling through the independent preset', () => {
         expect(preset.independentConfig.promptedHeader).toBe(COMPILER_HEADER);
         expect([...preset.variables.keys()]).toEqual([
             'archivist__compiled_facts', 'archivist__compiled_relationships', 'archivist__compiled_characters', 'archivist__compiled_story_summary', 'archivist__compiled_scene_summary', 'archivist__compiled_phrase_tics',
+            'archivist__compiled_tension',
         ]);
         expect(preset.variables.get('archivist__compiled_story_summary')).toMatchObject({ type: 'string', prompted: { newEachTurn: true } });
         expect(preset.variables.get('archivist__compiled_facts').prompted.newEachTurn).toBe(true);
@@ -497,6 +597,9 @@ describe('compiling through the independent preset', () => {
         expect(fake.readValue('Chat A', 'archivist__compiled_story_summary')).toBe('');
         expect(fake.readValue('Chat A', 'archivist__compiled_world')).toEqual([]);
         expect(view.timeline).toHaveLength(1);
+        expect(view.tension).toEqual([{ message_index: 1, threat: 2, uncertainty: 3, emotional: 4, overall: 3, reason: 'Lucian is stretched thin.' }]);
+        expect(view.tension_now).toEqual(view.tension[0]);
+        expect(fake.readValue('Chat A', 'archivist__compiled_tension')).toEqual([]);
         expect(await getCompiledMemory('Chat A')).toEqual(view);
     });
 

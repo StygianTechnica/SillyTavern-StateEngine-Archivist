@@ -20,8 +20,10 @@
 //   (any item)    edited_at - set when the user edited it (memory browser)
 //   thread        { id: "t<n>", kind, title, text, status, progress,
 //                   entity (an object of its title - a quest - or null),
-//                   involved: [entity], sources } - plot hooks, open
-//                   threads, quest seeds
+//                   involved: [entity], goal, steps: [step], sources } -
+//                   plot hooks, open threads, quest seeds; a plan has a
+//                   `goal` and its `steps` in order (else '' and [])
+//   step          { text, status (STEP_STATUSES), involved: [entity], note }
 //   world entry   { id: "w<n>", kind (WORLD_KINDS), name, text,
 //                   entity (the object it names, or null), known_by:
 //                   [entity] (secrets), involved: [entity], status, sources }
@@ -29,6 +31,12 @@
 //                 scene (the memory part's two summaries; '' until
 //                 compiled), and the newest message the scene summary was
 //                 written from (null when unknown)
+//   tension       [reading] - the story's tension, one reading per compile
+//                 batch, oldest first (a rebuild starts the series over)
+//   reading       { at: the newest message index of its batch (or null),
+//                   memory_id: that batch's newest memory, threat,
+//                   uncertainty, emotional (0..TENSION_MAX), overall (their
+//                   average), reason }
 //   dismissed     [{ kind, key, label }] - items the user deleted
 //                 (dismissKey()); a later answer that brings one back is
 //                 left out, so a rebuild does not restore them either
@@ -51,14 +59,15 @@
 
 import {
     normalizeClassification, SCOPE_CLASSIFICATION, withColorTag, normalizePolarity, polarityLabel, normalizeIntensity, normalizeTrend,
-    normalizeThreadStatus, normalizeWorldKind, normalizeSecretStatus, WORLD_KINDS, THREAD_STATUSES,
+    normalizeThreadStatus, normalizeStepStatus, stepsFromText, normalizeWorldKind, normalizeSecretStatus, WORLD_KINDS, THREAD_STATUSES,
+    TENSION_AXES, normalizeTensionLevel, tensionOverall,
 } from './compiled-schema.js';
 import { parseSource, messageDateOf } from '../memory/message-sync-plan.js';
 
 export const COMPILED_SCHEMA = 2;
 
 export const EMPTY_COMPILED = Object.freeze({
-    facts: [], relationships: [], characters: [], threads: [], world: [], summary: Object.freeze({ story: '', scene: '', sceneAt: null }),
+    facts: [], relationships: [], characters: [], threads: [], world: [], tension: [], summary: Object.freeze({ story: '', scene: '', sceneAt: null }),
     dismissed: [], included: [], compiledAt: null, schema: COMPILED_SCHEMA,
 });
 
@@ -73,6 +82,23 @@ export function parseSummary(story, scene, previous, sceneAt = null) {
         scene: newScene || previous?.scene || '',
         sceneAt: newScene ? (sceneAt ?? previous?.sceneAt ?? null) : (previous?.sceneAt ?? null),
     };
+}
+
+// The tension series with the model's reading for a batch added: `raw` is
+// its answer (a list with one { threat, uncertainty, emotional, reason }),
+// `batch` the memories it read. A reading at the same message as the
+// last one replaces it; an answer without all three levels adds nothing.
+export function parseTension(raw, previousTension, batch) {
+    const series = Array.isArray(previousTension) ? previousTension : [];
+    const answer = (Array.isArray(raw) ? raw : [raw]).find((item) => item && typeof item === 'object');
+    if (!answer) return series;
+    const levels = Object.fromEntries(TENSION_AXES.map((axis) => [axis, normalizeTensionLevel(answer[axis])]));
+    if (Object.values(levels).some((level) => level === null)) return series;
+    const at = newestMessageIndex(batch);
+    const newest = [...(batch ?? [])].sort((a, b) => (messageIndexOf(a) ?? -1) - (messageIndexOf(b) ?? -1)).at(-1);
+    const reading = { at, memory_id: newest?.id ?? null, ...levels, overall: tensionOverall(levels), reason: text(answer.reason) };
+    const last = series.at(-1);
+    return last && at !== null && last.at === at ? [...series.slice(0, -1), reading] : [...series, reading];
 }
 
 // The newest message index among `records` (null when none has one).
@@ -171,6 +197,17 @@ function characterLine(c) {
     return `- ${c.entity.name}: ${parts.join('; ') || '(nothing yet)'}`;
 }
 
+// The latest tension readings, so the next one is judged on the same scale.
+export const TENSION_CONTEXT = 5;
+
+function tensionLines(tension) {
+    const recent = (tension ?? []).slice(-TENSION_CONTEXT);
+    if (!recent.length) return ['Story tension so far: (none yet)'];
+    return ['Story tension so far (latest readings, oldest first):', ...recent.map((t) => (
+        `- ${t.at === null ? 'at an earlier point' : `at message #${t.at}`}: threat ${t.threat}, uncertainty ${t.uncertainty}, emotional ${t.emotional} (overall ${t.overall})${t.reason ? ` - ${t.reason}` : ''}`
+    ))];
+}
+
 // What the MEMORY part's model reads: the current facts, relationships and
 // character insights, then the new memories. `nameOf(id)` -> a display
 // name for an entity id (or null).
@@ -181,6 +218,7 @@ export function compileContext(previous, batch, nameOf = () => null, extraLines 
         'Current compiled knowledge:',
         `Story so far: ${previous.summary?.story || '(none yet)'}`,
         `Current scene: ${previous.summary?.scene || '(none yet)'}`,
+        ...tensionLines(previous.tension),
         'Facts:',
     ];
     if (previous.facts.length === 0) lines.push('(none yet)');
@@ -214,6 +252,8 @@ export function worldContext(previous, batch, nameOf = () => null) {
     for (const t of previous.threads ?? []) {
         const involved = entityList(t.involved);
         lines.push(`[${t.id}] ${t.kind} · ${t.status}${involved ? ` · involves ${involved}` : ''}: ${t.title} - ${t.text}${t.progress ? ` (progress: ${t.progress})` : ''}`);
+        if (t.goal) lines.push(`    goal: ${t.goal}`);
+        (t.steps ?? []).forEach((s, i) => lines.push(`    ${i + 1}. [${s.status}] ${s.text}${s.note ? ` (${s.note})` : ''}`));
     }
     lines.push('World:');
     if (!previous.world?.length) lines.push('(none yet)');
@@ -399,10 +439,26 @@ export function parseThreads(rawThreads, { previous, refs, resolve }) {
             progress: text(raw.progress),
             entity: linked.id ? linked : null,
             involved: names(raw.involved ?? raw.entities).map(resolve),
+            goal: text(raw.goal) || (previousById.get(id)?.goal ?? ''),
+            // An answer without steps keeps the plan's earlier ones.
+            steps: Array.isArray(raw.steps) && raw.steps.length ? parseSteps(raw.steps, resolve) : (previousById.get(id)?.steps ?? []),
             sources: [...new Set([...(previousById.get(id)?.sources ?? []), ...sourceIdsOf(raw.sources, refs)])],
         });
     }
     return carriedForward(threads, previous.threads, (t) => t.id);
+}
+
+// A plan's steps, in the answer's order. A step may come as a plain string.
+export function parseSteps(rawSteps, resolve = (name) => ({ id: null, name, type: null })) {
+    return (Array.isArray(rawSteps) ? rawSteps : [])
+        .map((raw) => (typeof raw === 'string' ? { text: raw } : raw))
+        .filter((raw) => raw && typeof raw === 'object' && isText(raw.text))
+        .map((raw) => ({
+            text: text(raw.text),
+            status: normalizeStepStatus(raw.status),
+            involved: names(raw.involved ?? raw.entities).map(resolve),
+            note: text(raw.note),
+        }));
 }
 
 // World entries: secrets, locations, factions, items, events, lore.
@@ -487,6 +543,11 @@ function patched(kind, item, patch) {
             set('status', normalizeThreadStatus);
             set('text', (v) => text(v) || item.text);
             set('progress', text);
+            set('goal', text);
+            // Steps as the user left them - [{ text, status, note }] or
+            // stepsToText() lines - in order; a step keeps the involved of
+            // the step that was at its position.
+            set('steps', (v) => parseSteps(typeof v === 'string' ? stepsFromText(v) : v).map((step, i) => (step.involved.length ? step : { ...step, involved: item.steps?.[i]?.involved ?? [] })));
             break;
         case 'world':
             set('name', (v) => text(v) || item.name);
@@ -639,6 +700,9 @@ export function recentSceneMemories(records, window = SCENE_WINDOW) {
 //       cells: [{ from, to, polarity, polarity_label, type, intensity }] },
 //     threads: [thread], quests: [thread] (those with an object or kind
 //       quest), world: { secret: [...], location: [...], ... },
+//     tension: [{ message_index, threat, uncertainty, emotional, overall,
+//       reason }] (oldest first - a graph's points), tension_now (the last
+//       one, or null),
 //     timeline: [{ memory_id, text, entity_ids, witnesses: [{ id, name }],
 //       major, tags, tone, importance, message_index, message_date,
 //       source_message_id, chat_id, scope, created_at }],
@@ -699,10 +763,17 @@ export function buildCompiledView(compiled, records, nameOf = () => null) {
         cells: relationships.map((r) => ({ from: r.from, to: r.to, polarity: r.polarity, polarity_label: r.polarity_label, type: r.type, intensity: r.intensity, trend: r.trend })),
     };
 
-    const threads = (compiled.threads ?? []).filter((t) => stands(t, present)).map((t) => withMessageLinks(t, byId))
+    // A thread compiled before plans has no goal or steps.
+    const threads = (compiled.threads ?? []).filter((t) => stands(t, present)).map((t) => withMessageLinks({ goal: '', steps: [], ...t }, byId))
         .sort((a, b) => THREAD_STATUSES.indexOf(a.status) - THREAD_STATUSES.indexOf(b.status));
     const world = Object.fromEntries(WORLD_KINDS.map((kind) => [kind, []]));
     for (const w of (compiled.world ?? []).filter((item) => stands(item, present))) world[w.kind]?.push(withMessageLinks(w, byId));
+
+    // A reading follows its memory's message when messages move (message-sync).
+    const tension = (compiled.tension ?? []).map((t) => ({
+        message_index: (t.memory_id && byId.has(t.memory_id) ? messageIndexOf(byId.get(t.memory_id)) : null) ?? t.at ?? null,
+        threat: t.threat, uncertainty: t.uncertainty, emotional: t.emotional, overall: t.overall, reason: t.reason ?? '',
+    }));
 
     const timeline = records
         .filter((r) => r.subtype === 'event')
@@ -733,6 +804,8 @@ export function buildCompiledView(compiled, records, nameOf = () => null) {
         threads,
         quests: threads.filter((t) => t.entity?.type === 'quest' || /quest/.test(t.kind)),
         world,
+        tension,
+        tension_now: tension.at(-1) ?? null,
         timeline,
         recent_tone: recentTone(records),
         pending: changesSince(compiled, records).added.length,

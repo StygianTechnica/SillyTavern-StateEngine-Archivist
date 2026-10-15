@@ -7,7 +7,8 @@
 // The model work runs through two of Archivist's own INDEPENDENT State
 // Engine presets, on the compiler's own connection - like catch-up:
 //
-//   "Archivist Memory Compiler"  facts, relationships, character insights
+//   "Archivist Memory Compiler"  facts, relationships, character insights,
+//                                the summaries, phrase tics, story tension
 //   "Archivist World Compiler"   story threads, the world
 //
 // Two presets, so each answer stays a manageable size and each prompt shows
@@ -42,9 +43,10 @@ import { readJsonFile, writeJsonFile } from '../memory/storage.js';
 import { runIndependent } from '../extraction/independent-run.js';
 import {
     EMPTY_COMPILED, COMPILED_SCHEMA, refsFor, compileContext, worldContext, parseCompileOutput, parseCharacters, parseThreads, parseWorld, parseSummary, changesSince, buildCompiledView,
-    newestMessageIndex, editCompiledItem, removeCompiledItem, editCompiledSummary,
+    newestMessageIndex, parseTension, editCompiledItem, removeCompiledItem, editCompiledSummary,
 } from './compile-plan.js';
 import { meaningfulCount, shouldCompile } from './schedule.js';
+import { TENSION_MAX } from './compiled-schema.js';
 
 export const COMPILER_PRESET = 'Archivist Memory Compiler';
 export const WORLD_COMPILER_PRESET = 'Archivist World Compiler';
@@ -54,6 +56,7 @@ export const CHARACTERS_VARIABLE = 'compiled_characters';
 export const STORY_SUMMARY_VARIABLE = 'compiled_story_summary';
 export const SCENE_SUMMARY_VARIABLE = 'compiled_scene_summary';
 export const PHRASE_TICS_VARIABLE = 'compiled_phrase_tics';
+export const TENSION_VARIABLE = 'compiled_tension';
 export const THREADS_VARIABLE = 'compiled_threads';
 export const WORLD_VARIABLE = 'compiled_world';
 
@@ -69,7 +72,8 @@ export const WORLD_VARIABLE = 'compiled_world';
 // 6: phrase tics.
 // 7: phrase tics: a wider net.
 // 8: phrase tics: stock description only.
-export const COMPILER_VARIABLE_VERSION = 8;
+// 9: plan steps on threads; story tension.
+export const COMPILER_VARIABLE_VERSION = 9;
 
 // New memories per compile run.
 export const COMPILE_BATCH = 60;
@@ -148,7 +152,11 @@ const THREADS_INSTRUCTIONS = [
     '"status": "open" (set up, not taken up yet), "active" (being pursued), "resolved" or "abandoned";',
     '"progress": what has happened with it so far and what is next ("" if nothing yet);',
     '"involved": the names of the characters, places, factions and things involved;',
+    '"goal": for a plan, the end it works toward ("" if it is not a plan);',
+    '"steps": for a plan, its steps in order ([] if it is not a plan) - each {"text": what is to be done; "status": "pending", "active" (being done now), "done", "skipped" (no longer needed) or "failed"; "involved": the names involved in that step; "note": a condition, cost or danger attached to it ("" if none)};',
     '"sources": the refs [m...] of the NEW memories it uses ([] if none)}.',
+    'A plan is any sequence of steps the characters lay out to get somewhere - first get X, then win over Y, then trade with Z - even when nobody calls it a plan: record it as one thread with its goal and every step in order.',
+    'Keep a plan\'s current steps in their order and update their status from the new memories; when the characters change the plan, add, reorder or mark steps "skipped" - never remove a step that is done.',
 ].join(' ');
 
 const WORLD_INSTRUCTIONS = [
@@ -172,6 +180,15 @@ const STORY_SUMMARY_INSTRUCTIONS = [
 const SCENE_SUMMARY_INSTRUCTIONS = [
     'The current scene in 2 or 3 sentences: where the characters are, who is there, and what is happening right now - from the newest memories (the highest message numbers), or the current scene if they add nothing to it.',
     'Present tense. No commentary.',
+].join(' ');
+
+const TENSION_INSTRUCTIONS = [
+    'The story\'s tension NOW - at the newest memories (the highest message numbers) - as a list with exactly one object:',
+    `{"threat": 0-${TENSION_MAX}, how much danger, conflict or hostility is in play and how high the stakes are;`,
+    `"uncertainty": 0-${TENSION_MAX}, how much is unknown, unresolved or in suspense - open questions, hidden motives, outcomes in doubt;`,
+    `"emotional": 0-${TENSION_MAX}, how much emotional strain, conflict or intensity the characters are under - fear, grief, anger, longing, confrontation;`,
+    '"reason": one short sentence on what drives the tension now}.',
+    `0 is none - a calm, settled, safe moment; ${TENSION_MAX} is the most the story could hold - a climax. Judge each on its own, on the same scale as the "Story tension so far", and let it fall as well as rise: a quiet scene after a fight is low.`,
 ].join(' ');
 
 const PHRASE_TICS_INSTRUCTIONS = [
@@ -222,6 +239,7 @@ const PRESETS = [
             [STORY_SUMMARY_VARIABLE, () => summaryDef(STORY_SUMMARY_INSTRUCTIONS, 'Compiled story summary')],
             [SCENE_SUMMARY_VARIABLE, () => summaryDef(SCENE_SUMMARY_INSTRUCTIONS, 'Compiled scene summary')],
             [PHRASE_TICS_VARIABLE, () => variableDef(PHRASE_TICS_INSTRUCTIONS, 'Compiled phrase tics', { ref: { type: 'string' }, phrase: { type: 'string' } })],
+            [TENSION_VARIABLE, () => variableDef(TENSION_INSTRUCTIONS, 'Compiled story tension', { reason: { type: 'string' } })],
         ],
     },
     {
@@ -273,6 +291,7 @@ const normalizeCompiled = (data) => ({
     characters: list(data?.characters),
     threads: list(data?.threads),
     world: list(data?.world),
+    tension: list(data?.tension),
     summary: {
         story: String(data?.summary?.story ?? ''),
         scene: String(data?.summary?.scene ?? ''),
@@ -496,7 +515,7 @@ async function compileRun(ref, { rebuild }) {
         const batch = batches[b];
         const refs = refsFor(batch);
         const last = b === batches.length - 1;
-        const memory = await runPart(COMPILER_PRESET, [FACTS_VARIABLE, RELATIONSHIPS_VARIABLE, CHARACTERS_VARIABLE, STORY_SUMMARY_VARIABLE, SCENE_SUMMARY_VARIABLE, PHRASE_TICS_VARIABLE],
+        const memory = await runPart(COMPILER_PRESET, [FACTS_VARIABLE, RELATIONSHIPS_VARIABLE, CHARACTERS_VARIABLE, STORY_SUMMARY_VARIABLE, SCENE_SUMMARY_VARIABLE, PHRASE_TICS_VARIABLE, TENSION_VARIABLE],
             compileContext(compiled, batch, nameOf, candidateLines(last ? candidates : [])), ref.chatId);
         if (last) recordFoundTics(chatKey, parseTicAnswer(memory[PHRASE_TICS_VARIABLE], candidates));
         let world = { [THREADS_VARIABLE]: [], [WORLD_VARIABLE]: [] };
@@ -516,6 +535,7 @@ async function compileRun(ref, { rebuild }) {
             ...next,
             characters: parseCharacters(memory[CHARACTERS_VARIABLE], options),
             summary: parseSummary(memory[STORY_SUMMARY_VARIABLE], memory[SCENE_SUMMARY_VARIABLE], compiled.summary, newestMessageIndex(batch)),
+            tension: parseTension(memory[TENSION_VARIABLE], compiled.tension, batch),
             threads: withWorld ? parseThreads(world[THREADS_VARIABLE], options) : compiled.threads,
             world: withWorld ? parseWorld(world[WORLD_VARIABLE], options) : compiled.world,
             dismissed: compiled.dismissed ?? [],

@@ -23,7 +23,7 @@ import { getAllMemories, deleteMemoryRecords, deleteChatMemories, MEMORIES_CHANG
 import { listChatEntries, getChatEntry, getCurrentChatRef, chatKeyFor } from '../memory/registry.js';
 import { checkChatsExist } from '../memory/chat-existence.js';
 import { getObject, addObjectAlias } from '../api/objects.js';
-import { groupChats, filterChoices, filterRecords, shortDate, sourceLabel } from './memory-browser-model.js';
+import { groupChats, filterChoices, filterRecords, shortDate, sourceLabel, tensionChart } from './memory-browser-model.js';
 import { confirmAction } from './confirm.js';
 import {
     getCompiledMemory, compileOpenChat, isCompiling, getCompilerStatus, onCompilerStatus, COMPILED_CHANGED_EVENT,
@@ -32,6 +32,7 @@ import {
 import { findViewItem, editValues, buildEditForm, itemButtons } from './compiled-edit.js';
 import { getChatPhraseTics, removePhraseTic, PHRASE_TICS_CHANGED_EVENT } from '../compiler/phrase-tic-tracker.js';
 import { WARN_AT } from '../compiler/phrase-tics.js';
+import { currentStep, TENSION_AXES, TENSION_MAX } from '../compiler/compiled-schema.js';
 import { compilerLine } from './drawer-model.js';
 import { jumpToMessage } from './chat-jump.js';
 
@@ -408,9 +409,79 @@ function threadRowView(thread) {
     meta.append(itemButtons('thread', thread.id));
     row.append(meta, el('div', 'ar-mb-record-text', thread.text));
     if (thread.progress) row.append(el('div', 'ar-mb-record-entities', `Progress: ${thread.progress}`));
+    if (thread.goal) row.append(el('div', 'ar-mb-record-entities', `Goal: ${thread.goal}`));
+    if (thread.steps?.length) row.append(planSteps(thread.steps));
     const involved = thread.involved.map((e) => e.name).filter(Boolean).join(', ');
     if (involved) row.append(el('div', 'ar-mb-record-entities', `Involves: ${involved}`));
     return row;
+}
+
+const STEP_ICONS = { pending: 'fa-regular fa-circle', active: 'fa-solid fa-circle-half-stroke', done: 'fa-solid fa-circle-check', skipped: 'fa-solid fa-forward', failed: 'fa-solid fa-circle-xmark' };
+
+// A plan's steps as a numbered checklist, the current one marked.
+function planSteps(steps) {
+    const list = el('ol', 'ar-mb-steps');
+    const now = currentStep(steps);
+    for (const step of steps) {
+        const item = el('li', `ar-mb-step ar-mb-step-${step.status}${step === now ? ' ar-mb-step-current' : ''}`);
+        const icon = el('i', STEP_ICONS[step.status] ?? STEP_ICONS.pending);
+        icon.title = step.status;
+        item.append(icon, el('span', '', ` ${step.text}`));
+        if (step.note) item.append(el('span', 'ar-mb-step-note', ` — ${step.note}`));
+        const involved = (step.involved ?? []).map((e) => e.name).filter(Boolean).join(', ');
+        if (involved) item.title = `Involves: ${involved}`;
+        list.append(item);
+    }
+    return list;
+}
+
+// ---- story tension
+
+const SVG = 'http://www.w3.org/2000/svg';
+const svg = (tag, attributes = {}) => {
+    const node = document.createElementNS(SVG, tag);
+    for (const [name, value] of Object.entries(attributes)) node.setAttribute(name, String(value));
+    return node;
+};
+const TENSION_LABELS = { overall: 'Overall', threat: 'Threat', uncertainty: 'Uncertainty', emotional: 'Emotional' };
+
+// The tension now, and a graph of every reading: the overall line, the
+// three axes fainter behind it.
+function tensionRows(view) {
+    const now = view.tension_now;
+    const chart = tensionChart(view.tension, { width: 600, height: 120, max: TENSION_MAX });
+    if (!now || !chart) return [];
+    const row = el('div', 'ar-mb-fact ar-mb-tension');
+    const meta = el('div', 'ar-mb-record-meta');
+    meta.append(el('span', 'ar-mb-status', `Now ${now.overall} / ${TENSION_MAX}`),
+        ...TENSION_AXES.map((axis) => el('span', `ar-mb-tension-key ar-mb-tension-${axis}`, `${TENSION_LABELS[axis]} ${now[axis]}`)));
+    const link = Number.isInteger(now.message_index) ? el('span', '', `at message #${now.message_index}`) : null;
+    if (link) meta.append(link);
+    row.append(meta);
+    if (now.reason) row.append(el('div', 'ar-mb-record-text', now.reason));
+
+    const graph = svg('svg', { viewBox: '-4 -4 608 128', class: 'ar-mb-tension-graph', role: 'img' });
+    graph.append(svg('title'));
+    graph.firstChild.textContent = `Story tension over ${view.tension.length} readings`;
+    for (let level = 0; level <= TENSION_MAX; level++) {
+        const y = 120 - (level / TENSION_MAX) * 120;
+        graph.append(svg('line', { x1: 0, x2: 600, y1: y, y2: y, class: 'ar-mb-tension-grid' }));
+    }
+    for (const axis of TENSION_AXES) graph.append(svg('polyline', { points: chart.lines[axis], class: `ar-mb-tension-line ar-mb-tension-${axis}` }));
+    graph.append(svg('polyline', { points: chart.lines.overall, class: 'ar-mb-tension-line ar-mb-tension-overall' }));
+    for (const point of chart.points) {
+        const dot = svg('circle', { cx: point.x, cy: point.y, r: 3, class: 'ar-mb-tension-dot' });
+        const r = point.reading;
+        dot.append(svg('title'));
+        dot.firstChild.textContent = `${Number.isInteger(r.message_index) ? `Message #${r.message_index}: ` : ''}overall ${r.overall} (threat ${r.threat}, uncertainty ${r.uncertainty}, emotional ${r.emotional})${r.reason ? ` - ${r.reason}` : ''}`;
+        graph.append(dot);
+    }
+    const scale = el('div', 'ar-mb-record-entities ar-mb-tension-scale');
+    scale.append(el('span', '', chart.from === null ? 'oldest' : `message #${chart.from}`), el('span', '', chart.to === null ? 'newest' : `message #${chart.to}`));
+    const legend = el('div', 'ar-mb-record-entities');
+    legend.append(...['overall', ...TENSION_AXES].map((key) => el('span', `ar-mb-tension-key ar-mb-tension-${key}`, TENSION_LABELS[key])));
+    row.append(graph, scale, legend);
+    return [row];
 }
 
 const WORLD_SECTIONS = [
@@ -511,6 +582,7 @@ function renderCompiled() {
         head,
         ...(suggestions.length ? [section('Suggested aliases', suggestions.map(aliasRow), '')] : []),
         section('Story so far', view.story_summary ? [summaryRow(view.story_summary, 'story')] : [], 'No summary yet - the next compile writes one.'),
+        section('Story tension', tensionRows(view), 'No tension readings yet - each compile adds one.'),
         section('Characters', view.character_profiles.map(profileBox), 'No lasting facts or insights yet.'),
         section('Scene', sceneRows(view), 'Nothing about the current scene yet.'),
         section('Session', view.session_details.map(factRow), 'Nothing about this part of the story.'),

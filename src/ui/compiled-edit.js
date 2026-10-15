@@ -10,7 +10,7 @@
 // "known by") are edited as comma-separated text.
 
 import {
-    CLASSIFICATIONS, POLARITY_LABELS, INTENSITIES, TRENDS, THREAD_STATUSES, WORLD_KINDS,
+    CLASSIFICATIONS, POLARITY_LABELS, INTENSITIES, TRENDS, THREAD_STATUSES, WORLD_KINDS, stepsToText,
 } from '../compiler/compiled-schema.js';
 
 const pairs = (values) => values.map((v) => [v, v]);
@@ -44,6 +44,8 @@ export const EDIT_FIELDS = Object.freeze({
         ['status', 'Status', 'select', pairs(THREAD_STATUSES)],
         ['text', 'What it is', 'textarea'],
         ['progress', 'Progress', 'textarea'],
+        ['goal', 'Plan goal', 'text'],
+        ['steps', 'Plan steps', 'textarea'],
     ],
     world: [
         ['name', 'Name', 'text'],
@@ -62,6 +64,8 @@ const PLACEHOLDERS = {
     traits: 'comma-separated', habits: 'comma-separated', stressors: 'comma-separated', motivations: 'comma-separated',
     known_by: 'names, comma-separated',
     status: 'secret: kept / revealed / disproven · event: ongoing / over',
+    goal: 'what the plan works toward (blank if not a plan)',
+    steps: 'one per line, in order: [pending|active|done|skipped|failed] what to do | note',
 };
 
 // The item of `kind` with `key` in a compiled view (getCompiledMemory()),
@@ -90,7 +94,8 @@ export function editValues(kind, item) {
     const values = {};
     for (const [field] of EDIT_FIELDS[kind] ?? []) {
         const value = item?.[field];
-        if (field === 'known_by') values[field] = (value ?? []).map((e) => e?.name).filter(Boolean).join(', ');
+        if (field === 'steps') values[field] = stepsToText(value);
+        else if (field === 'known_by') values[field] = (value ?? []).map((e) => e?.name).filter(Boolean).join(', ');
         else if (LIST_FIELDS.has(field)) values[field] = (value ?? []).join(', ');
         else values[field] = value === null || value === undefined ? '' : String(value);
     }

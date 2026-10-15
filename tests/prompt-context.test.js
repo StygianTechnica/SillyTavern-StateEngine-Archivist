@@ -8,7 +8,7 @@ import { resetFakeStateEngine } from './harness/state-engine.js';
 import { loadCurrentChat, addMemoryRecords } from '../src/memory/archivist.js';
 import { getCurrentChatRef } from '../src/memory/registry.js';
 import { getSettings } from '../src/settings.js';
-import { buildPromptContext, CONTEXT_BLOCKS, REFERENCE_MARKER } from '../src/context/prompt-context.js';
+import { buildPromptContext, threadLine, CONTEXT_BLOCKS, REFERENCE_MARKER } from '../src/context/prompt-context.js';
 import { syncPromptContext, CONTEXT_CAPABILITIES } from '../src/context/prompt-sync.js';
 import { recentSceneMemories, parseSummary } from '../src/compiler/compile-plan.js';
 import { ensureLivePreset } from '../src/extraction/live.js';
@@ -88,6 +88,38 @@ describe('buildPromptContext', () => {
         const old = buildPromptContext({ ...view, scene_summary_at: 5 }, { present: [syr] });
         expect(body(old.ctx_scene)).toBe(['Current scene:', 'Present: Syrvanus Voxaris.', '- It is night.', 'Just happened (oldest first):', '- The gremlins revealed themselves.'].join('\n'));
         expect(buildPromptContext({ ...view, scene_summary: '', scene_state: [], scene_recent: [] }, { present: [syr] }).ctx_scene).toBe('');
+    });
+
+    it('gives active threads always, and open ones only when someone in the scene (not the persona) is involved', () => {
+        const remus = { id: 'chr_r', name: 'Remus Watt' };
+        const varyn = { id: 'chr_v', name: 'Varyn' };
+        const threads = [
+            { title: 'Escape Morvath', kind: 'quest', status: 'active', text: 'a', involved: [remus] },
+            { title: 'Maren past', kind: 'quest seed', status: 'open', text: 'b', involved: [{ id: 'chr_m', name: 'Maren' }, remus] },
+            { title: 'Supplies', kind: 'quest seed', status: 'open', text: 'c', involved: [remus], steps: [{ text: 'Win over Niamh', status: 'pending', involved: [{ id: null, name: 'Niamh' }] }] },
+            { title: 'Varyn debt', kind: 'plot hook', status: 'open', text: 'd', involved: [varyn] },
+            { title: 'Done', kind: 'quest', status: 'resolved', text: 'e', involved: [varyn] },
+        ];
+        const titles = (present) => body(buildPromptContext({ threads }, { present, persona: remus }).ctx_threads).split('\n')
+            .filter((l) => l.startsWith('- ')).map((l) => l.match(/\] (.*) \(/)[1]);
+        expect(titles([remus, varyn])).toEqual(['Escape Morvath', 'Varyn debt']);
+        expect(titles([remus, { id: 'chr_n', name: 'Niamh' }])).toEqual(['Escape Morvath', 'Supplies']);
+        // No one but the persona marked present: every open one.
+        expect(titles([remus])).toEqual(['Escape Morvath', 'Maren past', 'Supplies', 'Varyn debt']);
+    });
+
+    it('shows a plan\'s goal, the step it is on and the next', () => {
+        const plan = {
+            title: 'Supplies', kind: 'quest seed', status: 'active', text: 'Equip the expedition.', progress: '', goal: 'Secure supplies',
+            steps: [
+                { text: 'Get books from the library', status: 'done' },
+                { text: 'Win over Niamh', status: 'active', note: 'for a price' },
+                { text: 'Barter with Graxx', status: 'pending' },
+            ],
+        };
+        expect(threadLine(plan)).toBe('- [active] Supplies (quest seed): Equip the expedition.\n  Plan: Goal: Secure supplies. Step 2 of 3, now: Win over Niamh (for a price). Then: Barter with Graxx.');
+        expect(threadLine({ ...plan, goal: '', steps: plan.steps.map((s) => ({ ...s, status: 'done' })) })).toBe('- [active] Supplies (quest seed): Equip the expedition.\n  Plan: All steps done.');
+        expect(threadLine({ ...plan, goal: '', steps: [] })).toBe('- [active] Supplies (quest seed): Equip the expedition.');
     });
 
     it('is empty without a compiled view', () => {

@@ -65,3 +65,30 @@ export function sourceLabel(sourceMessageId) {
     const match = /#(\d+)@/.exec(String(sourceMessageId ?? ''));
     return match ? `message #${match[1]}` : String(sourceMessageId ?? '');
 }
+
+// The story tension graph: the view's `tension` readings as polylines in a
+// `width` x `height` box (y 0 at the top), x by message index - by order
+// for a series where some reading has none - and y by level 0..`max`.
+// -> { lines: { overall, threat, uncertainty, emotional }: 'x,y x,y...',
+//      points: [{ x, y, reading }] (overall), from, to } (from/to: the
+//      first and last message index, null when x is by order), or null
+//      with no readings.
+export function tensionChart(series, { width = 300, height = 100, max = 5 } = {}) {
+    let readings = (series ?? []).filter((r) => Number.isFinite(r?.overall));
+    if (!readings.length) return null;
+    const byIndex = readings.every((r) => Number.isInteger(r.message_index));
+    if (byIndex) readings = [...readings].sort((a, b) => a.message_index - b.message_index);
+    const xs = readings.map((r, i) => (byIndex ? r.message_index : i));
+    const first = Math.min(...xs);
+    const span = Math.max(...xs) - first;
+    const xOf = (i) => (span === 0 ? width / 2 : ((xs[i] - first) / span) * width);
+    const yOf = (level) => height - (Math.min(max, Math.max(0, level)) / max) * height;
+    const round = (n) => Math.round(n * 10) / 10;
+    const line = (field) => readings.map((r, i) => `${round(xOf(i))},${round(yOf(r[field] ?? 0))}`).join(' ');
+    return {
+        lines: { overall: line('overall'), threat: line('threat'), uncertainty: line('uncertainty'), emotional: line('emotional') },
+        points: readings.map((r, i) => ({ x: round(xOf(i)), y: round(yOf(r.overall)), reading: r })),
+        from: byIndex ? first : null,
+        to: byIndex ? Math.max(...xs) : null,
+    };
+}

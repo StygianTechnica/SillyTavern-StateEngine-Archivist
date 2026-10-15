@@ -142,6 +142,13 @@ guide): `null` when it was never compiled. `chat_id` works as for
   quests: [thread],            // the threads that are quests (linked to a quest object, or kind "quest")
   world: { secret: [entry], location: [entry], faction: [entry], item: [entry],
            event: [entry], lore: [entry] },
+  tension: [{                  // the story's tension, one reading per compile batch, oldest
+    message_index,             // first - the points of a tension graph (a Rebuild starts it over)
+    threat, uncertainty, emotional,  // each 0..5
+    overall,                   // their average, one decimal
+    reason,                    // what drives the tension at that point
+  }],
+  tension_now,                 // the newest reading, or null
   timeline: [{ memory_id, text, entity_ids, witnesses: [{ id, name }], major, tags, tone,
                message_index, message_date, source_message_id, chat_id, scope,
                importance, created_at }],                     // event memories, story order
@@ -210,6 +217,13 @@ thread = {
   progress,                                 // what has happened with it so far
   entity: entity | null,                    // the object its title names - a quest object
   involved: [entity],
+  goal,                                     // a plan's end ('' when not a plan)
+  steps: [{                                 // a plan's steps in order ([] when not a plan)
+    text,
+    status,                                 // 'pending' | 'active' | 'done' | 'skipped' | 'failed'
+    involved: [entity],
+    note,                                   // a condition, cost or danger ('' if none)
+  }],
   chat_id, source_memory_ids, source_messages, message_range,
 }
 

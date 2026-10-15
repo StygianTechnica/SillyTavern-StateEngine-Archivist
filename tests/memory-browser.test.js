@@ -227,6 +227,28 @@ describe('the memory browser window', () => {
         expect(texts()).toHaveLength(2);
     });
 
+    it('graphs the story tension and lists a plan\'s steps', async () => {
+        fake.respond = async () => ({
+            archivist__compiled_facts: [{ text: 'Mira keeps secrets.', classification: 'PERMANENT', entities: ['Mira'], sources: ['m1'] }],
+            archivist__compiled_tension: [{ threat: 4, uncertainty: 3, emotional: 2, reason: 'The key is missing.' }],
+            archivist__compiled_threads: [{
+                kind: 'quest seed', title: 'Open the vault', text: 'x', status: 'active', goal: 'Get inside',
+                steps: [{ text: 'Find the key', status: 'done' }, { text: 'Bribe the guard', status: 'pending', note: 'he drinks' }],
+            }],
+        });
+        const { compileOpenChat } = await import('../src/compiler/compiler.js');
+        await compileOpenChat();
+
+        await openMemoryBrowser({ view: 'compiled' });
+        await waitFor(() => expect(q('.ar-mb-tension')).not.toBeNull());
+        expect(q('.ar-mb-tension .ar-mb-status').textContent).toBe('Now 3 / 5');
+        expect(qa('.ar-mb-tension-graph polyline')).toHaveLength(4);
+        expect(qa('.ar-mb-tension-graph circle')).toHaveLength(1);
+        expect(q('.ar-mb-tension .ar-mb-record-text').textContent).toBe('The key is missing.');
+        expect(qa('.ar-mb-step').map((n) => n.textContent)).toEqual([' Find the key', ' Bribe the guard — he drinks']);
+        expect(q('.ar-mb-step-current').textContent).toBe(' Bribe the guard — he drinks');
+    });
+
     it('edits and deletes what the compiler wrote', async () => {
         fake.respond = async () => ({
             archivist__compiled_facts: [{ text: 'Mira keeps secrets.', classification: 'PERMANENT', entities: ['Mira'], sources: ['m1'] }],
