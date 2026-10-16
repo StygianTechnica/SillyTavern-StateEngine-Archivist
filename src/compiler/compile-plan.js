@@ -27,7 +27,8 @@
 //   step          { text, status (STEP_STATUSES), involved: [entity], note }
 //   world entry   { id: "w<n>", kind (WORLD_KINDS), name, text,
 //                   entity (the object it names, or null), known_by:
-//                   [entity] (secrets), involved: [entity], status, sources }
+//                   [entity] (secrets), made_by, made_to: [entity] (promises),
+//                   involved: [entity], status, sources }
 //   summary       { story, scene, sceneAt } - the story so far, the current
 //                 scene (the memory part's two summaries; '' until
 //                 compiled), and the newest message the scene summary was
@@ -62,7 +63,7 @@
 
 import {
     normalizeClassification, SCOPE_CLASSIFICATION, withColorTag, normalizePolarity, polarityLabel, normalizeIntensity, normalizeTrend,
-    normalizeThreadStatus, normalizeStepStatus, stepsFromText, normalizeWorldKind, normalizeSecretStatus, WORLD_KINDS, THREAD_STATUSES,
+    normalizeThreadStatus, normalizeStepStatus, stepsFromText, normalizeWorldKind, normalizeWorldStatus, WORLD_KINDS, UNLINKED_WORLD_KINDS, THREAD_STATUSES,
     TENSION_AXES, normalizeTensionLevel, tensionOverall,
 } from './compiled-schema.js';
 import { parseSource, messageDateOf } from '../memory/message-sync-plan.js';
@@ -256,7 +257,10 @@ export function worldContext(previous, batch, nameOf = () => null) {
     if (!previous.world?.length) lines.push('(none yet)');
     for (const w of previous.world ?? []) {
         const knownBy = entityList(w.known_by);
-        lines.push(`[${w.id}] ${w.kind} · ${w.name}${knownBy ? ` · known by ${knownBy}` : ''}${w.status ? ` · ${w.status}` : ''}: ${w.text}`);
+        const madeBy = entityList(w.made_by);
+        const madeTo = entityList(w.made_to);
+        const promise = w.kind === 'promise' ? `${madeBy ? ` · made by ${madeBy}` : ''}${madeTo ? ` · made to ${madeTo}` : ''}` : '';
+        lines.push(`[${w.id}] ${w.kind} · ${w.name}${knownBy ? ` · known by ${knownBy}` : ''}${promise}${w.status ? ` · ${w.status}` : ''}: ${w.text}`);
     }
     lines.push(...dismissedLines(previous, ['thread', 'world']));
     lines.push(...newMemoryLines(batch, nameOf));
@@ -617,7 +621,7 @@ export function parseSteps(rawSteps, resolve = (name) => ({ id: null, name, type
         }));
 }
 
-// World entries: secrets, locations, factions, items, events, lore.
+// World entries: secrets, promises, locations, factions, items, events, lore.
 export function parseWorld(rawWorld, { previous, refs, resolve }) {
     const previousById = new Map((previous.world ?? []).map((w) => [w.id, w]));
     const nextId = idAssigner('w', previous.world ?? []);
@@ -630,8 +634,9 @@ export function parseWorld(rawWorld, { previous, refs, resolve }) {
         const id = nextId(raw);
         const kind = normalizeWorldKind(raw.kind);
         const name = text(raw.name) || text(raw.text).split(/[.!?]/)[0].slice(0, 80);
-        // A secret is named by what it hides, not by an object.
-        const linked = kind === 'secret' ? { id: null } : resolve(name);
+        // A secret is named by what it hides, a promise by what it binds
+        // someone to - not by an object.
+        const linked = UNLINKED_WORLD_KINDS.has(kind) ? { id: null } : resolve(name);
         world.push({
             id,
             kind,
@@ -639,8 +644,10 @@ export function parseWorld(rawWorld, { previous, refs, resolve }) {
             text: text(raw.text) || name,
             entity: linked.id ? linked : null,
             known_by: names(raw.known_by).map(resolve),
+            made_by: kind === 'promise' ? names(raw.made_by).map(resolve) : [],
+            made_to: kind === 'promise' ? names(raw.made_to).map(resolve) : [],
             involved: names(raw.involved ?? raw.entities).map(resolve),
-            status: kind === 'secret' ? normalizeSecretStatus(raw.status) : text(raw.status).toLowerCase(),
+            status: normalizeWorldStatus(kind, raw.status),
             sources: [...new Set([...(previousById.get(id)?.sources ?? []), ...sourceIdsOf(raw.sources, refs)])],
         });
     }
@@ -710,8 +717,10 @@ function patched(kind, item, patch) {
             set('name', (v) => text(v) || item.name);
             set('kind', normalizeWorldKind);
             set('text', (v) => text(v) || item.text);
-            set('known_by', (v) => phrasesFrom(v).map((name) => item.known_by?.find((e) => e.name === name) ?? { id: null, name, type: null }));
-            next.status = next.kind === 'secret' ? normalizeSecretStatus(has(patch, 'status') ? patch.status : item.status) : (has(patch, 'status') ? text(patch.status).toLowerCase() : item.status);
+            for (const field of ['known_by', 'made_by', 'made_to']) {
+                set(field, (v) => phrasesFrom(v).map((name) => item[field]?.find((e) => e.name === name) ?? { id: null, name, type: null }));
+            }
+            next.status = normalizeWorldStatus(next.kind, has(patch, 'status') ? patch.status : item.status);
             break;
         default:
     }
@@ -774,8 +783,15 @@ export function editCompiledSummary(compiled, which, value) {
 export function changesSince(compiled, records) {
     const included = new Set(compiled.included);
     const present = new Set(records.map((r) => r.id));
+    // In story order: a memory rebuild, or a retried chunk, adds its
+    // memories at the end of the file, wherever their messages are.
+    const added = records
+        .map((r, order) => ({ r, order, index: messageIndexOf(r) ?? Infinity }))
+        .filter(({ r }) => !included.has(r.id))
+        .sort((a, b) => a.index - b.index || a.order - b.order)
+        .map(({ r }) => r);
     return {
-        added: records.filter((r) => !included.has(r.id)),
+        added,
         removed: compiled.included.filter((id) => !present.has(id)).length,
     };
 }

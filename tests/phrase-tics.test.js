@@ -9,10 +9,11 @@ import { loadCurrentChat, addMemoryRecords } from '../src/memory/archivist.js';
 import { getCurrentChatRef, chatKeyFor } from '../src/memory/registry.js';
 import { getSettings } from '../src/settings.js';
 import {
-    phraseKey, usesPhrase, findCandidates, storyWordsOf, addFound, updateForReply, activeTics, prune, watchEntry, WARN_AT, MAX_TRACKED,
+    phraseKey, usesPhrase, findCandidates, storyWordsOf, addFound, updateForReply, activeTics, prune, watchEntry, WARN_AT, MAX_TRACKED, MAX_COUNT, MAX_SHOWN,
 } from '../src/compiler/phrase-tics.js';
 import {
     getChatPhraseTics, countNewestReply, removePhraseTic, getWatchList, getWatchText, setWatchText, currentModel, UNKNOWN_MODEL,
+    addPhraseTic, editPhraseTic, getPinnedTics, pinPhraseTic, unpinPhraseTic,
 } from '../src/compiler/phrase-tic-tracker.js';
 import { phraseTicBlock, REFERENCE_MARKER } from '../src/context/prompt-context.js';
 import { compileOpenChat } from '../src/compiler/compiler.js';
@@ -133,6 +134,15 @@ describe('following tics', () => {
             'Use alternative gestures or emotional cues. Maintain character voice and scene logic.',
         ].join('\n'));
     });
+
+    it('puts pinned phrases first, used or not, and fills the rest with tics in use', () => {
+        const pinned = [watchEntry('shot a sidelong glance')];
+        const tics = Array.from({ length: MAX_SHOWN }, (_, i) => ({ phrase: `tic number ${i}`, key: `tic number ${i}`, count: 3, last_used: `2026-10-${10 + i}` }));
+        const lines = phraseTicBlock([{ ...pinned[0], count: 0 }, ...tics], pinned).split('\n');
+        expect(lines[1]).toBe('Overused phrases. Please avoid the following phrases and vary your wording:');
+        expect(lines.filter((l) => l.startsWith('- '))).toEqual(['- shot a sidelong glance', ...tics.slice(1).reverse().map((t) => `- ${t.phrase}`)]);
+        expect(phraseTicBlock([], pinned)).toContain('- shot a sidelong glance');
+    });
 });
 
 describe('in a chat', () => {
@@ -146,7 +156,7 @@ describe('in a chat', () => {
         getContext().chat = [{ name: 'User', is_user: true, mes: 'hi', send_date: 'd0' }, ...replies.map((r) => reply(r.text, `d${r.index}`))];
         await loadCurrentChat();
         await addMemoryRecords(getCurrentChatRef(), [{ text: 'Kael smiled', source_message_id: 'Chat A#1@d1' }]);
-        fake.respond = async () => ({ archivist__compiled_facts: [{ text: 'Kael smiles a lot.', entities: ['Kael'], sources: ['m1'] }] });
+        fake.respond = async () => ({ ar__compiled_facts: [{ text: 'Kael smiles a lot.', entities: ['Kael'], sources: ['m1'] }] });
     });
 
     it('a compile flags what repeats and puts it on the model\'s watch list; replies fade it and flag it again', async () => {
@@ -208,6 +218,36 @@ describe('in a chat', () => {
         countNewestReply();
         // Caught again - by the default "in this together", or the phrase put back.
         expect(getChatPhraseTics().some((t) => key.includes(t.key) && t.count >= WARN_AT)).toBe(true);
+    });
+
+    it('the user can add a phrase, reword it, and pin it - eight pins at most', () => {
+        delete getSettings().phraseTicPinned;
+        const chatKey = chatKeyFor(getCurrentChatRef());
+        expect(addPhraseTic(chatKey, 'smirk')).toBeNull();
+        expect(addPhraseTic(chatKey, 'his jaw tightened')).toEqual({ phrase: 'his jaw tightened', key: phraseKey('his jaw tightened') });
+        expect(getChatPhraseTics().map((t) => [t.phrase, t.count])).toEqual([['his jaw tightened', MAX_COUNT]]);
+        expect(getWatchList('stheno-8b').map((w) => w.phrase)).toContain('his jaw tightened');
+
+        const key = phraseKey('his jaw tightened');
+        expect(pinPhraseTic('his jaw tightened')).toBe('pinned');
+        expect(pinPhraseTic('His jaw tightened.')).toBe('already');
+        expect(editPhraseTic(chatKey, key, 'her jaw clenched hard')).toBe(true);
+        const renamed = phraseKey('her jaw clenched hard');
+        expect(getChatPhraseTics().map((t) => [t.key, t.count])).toEqual([[renamed, MAX_COUNT]]);
+        expect(getPinnedTics().map((p) => p.phrase)).toEqual(['her jaw clenched hard']);
+        expect(getWatchList('stheno-8b').map((w) => w.key)).toContain(renamed);
+        expect(getWatchList('stheno-8b').map((w) => w.key)).not.toContain(key);
+
+        for (let i = 1; i < MAX_SHOWN; i++) expect(pinPhraseTic(`pinned phrase ${i}`)).toBe('pinned');
+        expect(pinPhraseTic('one too many')).toBe('full');
+        unpinPhraseTic(renamed);
+        expect(getPinnedTics()).toHaveLength(MAX_SHOWN - 1);
+        expect(getChatPhraseTics().map((t) => t.key)).toEqual([renamed]);
+
+        // Forgetting a pinned phrase unpins it too.
+        removePhraseTic(chatKey, phraseKey('pinned phrase 1'));
+        expect(getPinnedTics().map((p) => p.phrase)).not.toContain('pinned phrase 1');
+        delete getSettings().phraseTicPinned;
     });
 
     it('drops tics the older rules found, and knows no model before a reply', () => {

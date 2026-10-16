@@ -118,7 +118,7 @@ describe('the Archivist drawer', () => {
         await openDrawer();
         expect($('ar_last_harvest').textContent).toBe('Last update: no new memories from State Engine yet this session.');
 
-        fake.writeValue('Chat A', 'archivist__memories', [{ text: 'Mira laughed.' }, { text: 'Mira left.' }]);
+        fake.writeValue('Chat A', 'ar__memories', [{ text: 'Mira laughed.' }, { text: 'Mira left.' }]);
         await waitFor(() => expect($('ar_last_harvest').textContent).toMatch(/^Last update \(.+\): stored 2 memories\.$/));
         expect($('ar_last_harvest').classList.contains('ar-status-error')).toBe(false);
     });
@@ -157,7 +157,7 @@ describe('the Archivist drawer', () => {
 
     it('compiles this chat on Compile now and shows when it did', async () => {
         await addMemoryRecords(getCurrentChatRef(), [item('Lucian works at the gym')]);
-        fake.respond = async () => ({ archivist__compiled_facts: [{ text: 'Lucian works at the gym.', classification: 'PERMANENT', sources: ['m1'] }], archivist__compiled_relationships: [] });
+        fake.respond = async () => ({ ar__compiled_facts: [{ text: 'Lucian works at the gym.', classification: 'PERMANENT', sources: ['m1'] }], ar__compiled_relationships: [] });
         await openDrawer();
         await waitFor(() => expect($('ar_compile_status').textContent).toBe('Not compiled yet.'));
         $('ar_compile_now').click();

@@ -361,6 +361,21 @@ describe('planning and parsing', () => {
         expect(parseThreads([{ title: 'The gym job', text: 'a' }, { title: 'Gym job dues', text: 'b' }], options).map((t) => t.id)).toEqual(['t1', 't2']);
     });
 
+    it('tracks promises, oaths and vows - who made them, to whom, and whether they were kept', () => {
+        const world = parseWorld([
+            { kind: 'vows', name: 'Marriage vows', text: 'Lucian and Mira wed.', made_by: ['Lucian', 'Mira'], made_to: ['Mira', 'Lucian'], status: 'kept' },
+            { kind: 'oath', name: 'Never return', text: 'Gavin swore never to come back.', made_by: 'Gavin', status: 'Broken - he came back' },
+            { kind: 'promise', name: 'The loan', text: 'Lucian will repay Gavin.', made_by: ['Lucian'], made_to: ['Gavin'], status: 'unfulfilled' },
+            { kind: 'pledge', name: 'Gym dues', text: 'Waived.', status: 'called off' },
+        ], { ...options, previous: { ...EMPTY_COMPILED } });
+        expect(world.map((w) => [w.kind, w.status])).toEqual([['promise', 'kept'], ['promise', 'broken'], ['promise', 'pending'], ['promise', 'released']]);
+        expect(world[2]).toMatchObject({ entity: null, made_by: [{ id: 'chr_lucian' }], made_to: [{ id: null, name: 'Gavin' }] });
+        expect(worldContext({ ...EMPTY_COMPILED, world }, [], () => null)).toContain('[w3] promise · The loan · made by Lucian · made to Gavin · pending: Lucian will repay Gavin.');
+        const edited = editCompiledItem({ ...EMPTY_COMPILED, world }, 'world', 'w3', { status: 'fulfilled', made_to: 'Gavin, Mira' });
+        expect(edited.world[2]).toMatchObject({ status: 'kept', made_to: [{ id: null, name: 'Gavin' }, { id: null, name: 'Mira' }] });
+        expect(normalizeWorldKind('Marriage vows')).toBe('promise');
+    });
+
     it('reads "known only to" as a secret still kept', () => {
         expect(['known only to Varyn', 'hidden', 'not yet revealed', 'known', 'revealed'].map(normalizeSecretStatus)).toEqual(['kept', 'kept', 'kept', 'revealed', 'revealed']);
     });
@@ -618,17 +633,17 @@ describe('compiling through the independent preset', () => {
         const refs = [...context.matchAll(/\[(m\d+)\]/g)].map((m) => m[1]);
         const known = [...context.matchAll(/\[(f\d+)\] \w+ · [^·:]+(?: · about [^:]+)?: (.+)/g)].map((m) => ({ id: m[1], text: m[2] }));
         return {
-            archivist__compiled_facts: [
+            ar__compiled_facts: [
                 ...known.map((f) => ({ ...f, classification: 'PERMANENT', theme: 'employment', entities: ['Lucian'], sources: [] })),
                 ...refs.map((ref, i) => ({ id: `f${known.length + i + 1}`, text: `compiled ${ref}`, classification: 'SESSION', theme: 'activity', entities: ['Lucian'], sources: [ref] })),
             ],
-            archivist__compiled_relationships: [{ from: 'Lucian', to: 'Mira', type: 'trains', polarity: 1, text: 'Lucian trains Mira.', sources: refs.slice(0, 1) }],
-            archivist__compiled_characters: [{ name: 'Lucian', traits: ['steady'], sources: refs.slice(0, 1) }],
-            archivist__compiled_threads: [{ id: 't1', kind: 'quest seed', title: 'Promotion', text: 'Lucian might be promoted.', status: 'open', involved: ['Lucian'], sources: refs.slice(0, 1) }],
-            archivist__compiled_world: [{ id: 'w1', kind: 'location', name: 'The gym', text: 'Where Lucian works.', sources: refs.slice(0, 1) }],
-            archivist__compiled_story_summary: refs.length ? `Lucian worked through ${refs.length} memories.` : '',
-            archivist__compiled_scene_summary: '',
-            archivist__compiled_tension: refs.length ? [{ threat: 2, uncertainty: 3, emotional: 4, reason: 'Lucian is stretched thin.' }] : [],
+            ar__compiled_relationships: [{ from: 'Lucian', to: 'Mira', type: 'trains', polarity: 1, text: 'Lucian trains Mira.', sources: refs.slice(0, 1) }],
+            ar__compiled_characters: [{ name: 'Lucian', traits: ['steady'], sources: refs.slice(0, 1) }],
+            ar__compiled_threads: [{ id: 't1', kind: 'quest seed', title: 'Promotion', text: 'Lucian might be promoted.', status: 'open', involved: ['Lucian'], sources: refs.slice(0, 1) }],
+            ar__compiled_world: [{ id: 'w1', kind: 'location', name: 'The gym', text: 'Where Lucian works.', sources: refs.slice(0, 1) }],
+            ar__compiled_story_summary: refs.length ? `Lucian worked through ${refs.length} memories.` : '',
+            ar__compiled_scene_summary: '',
+            ar__compiled_tension: refs.length ? [{ threat: 2, uncertainty: 3, emotional: 4, reason: 'Lucian is stretched thin.' }] : [],
         };
     };
 
@@ -644,22 +659,22 @@ describe('compiling through the independent preset', () => {
     it('creates its two independent presets with their record lists, and runs them on its own connection', async () => {
         await store([{ text: 'Lucian works at the gym', source_message_id: 'Chat A#1@d1' }]);
         await compileOpenChat();
-        const preset = fake.presets.get(`archivist.${COMPILER_PRESET}`);
+        const preset = fake.presets.get(`ar.${COMPILER_PRESET}`);
         expect(preset.independentPreset).toBe(true);
         expect(preset.independentConfig.promptedHeader).toBe(COMPILER_HEADER);
         expect([...preset.variables.keys()]).toEqual([
-            'archivist__compiled_facts', 'archivist__compiled_relationships', 'archivist__compiled_characters', 'archivist__compiled_story_summary', 'archivist__compiled_scene_summary',
-            'archivist__compiled_tension',
+            'ar__compiled_facts', 'ar__compiled_relationships', 'ar__compiled_characters', 'ar__compiled_story_summary', 'ar__compiled_scene_summary',
+            'ar__compiled_tension',
         ]);
-        expect(preset.variables.get('archivist__compiled_story_summary')).toMatchObject({ type: 'string', prompted: { newEachTurn: true } });
-        const tension = preset.variables.get('archivist__compiled_tension').prompted.instructions;
+        expect(preset.variables.get('ar__compiled_story_summary')).toMatchObject({ type: 'string', prompted: { newEachTurn: true } });
+        const tension = preset.variables.get('ar__compiled_tension').prompted.instructions;
         // A fixed meaning per level, at the batch's most tense moment.
         expect(tension).toContain('MOST TENSE moment');
         expect(tension).toContain('4 a fight or a life at risk');
-        expect(preset.variables.get('archivist__compiled_facts').prompted.newEachTurn).toBe(true);
-        const world = fake.presets.get(`archivist.${WORLD_COMPILER_PRESET}`);
+        expect(preset.variables.get('ar__compiled_facts').prompted.newEachTurn).toBe(true);
+        const world = fake.presets.get(`ar.${WORLD_COMPILER_PRESET}`);
         expect(world.independentConfig.promptedHeader).toBe(WORLD_COMPILER_HEADER);
-        expect([...world.variables.keys()]).toEqual(['archivist__compiled_threads', 'archivist__compiled_world']);
+        expect([...world.variables.keys()]).toEqual(['ar__compiled_threads', 'ar__compiled_world']);
         for (const name of [COMPILER_PRESET, WORLD_COMPILER_PRESET]) {
             expect(fake.calls.filter((c) => c.name === 'configureIndependentPreset' && c.args[1] === name).at(-1).args[2]).toMatchObject({ connectionProfileId: 'big', maxTokens: 4000, temperature: 0.3, enabled: true });
         }
@@ -679,7 +694,7 @@ describe('compiling through the independent preset', () => {
         await compileOpenChat();
 
         expect(getCompilerStatus()).toMatchObject({ running: false, outcome: 'compiled' });
-        expect(fake.readValue('Chat A', 'archivist__compiled_facts')).toEqual([]);
+        expect(fake.readValue('Chat A', 'ar__compiled_facts')).toEqual([]);
         expect(JSON.parse(files.get(compiledFileFor(getChatEntry(ALICE))))).toMatchObject({ included: [m.id] });
         expect(eventSource.emit).toHaveBeenCalledWith(COMPILED_CHANGED_EVENT, { chatId: 'Chat A', chatKey: ALICE });
 
@@ -692,12 +707,12 @@ describe('compiling through the independent preset', () => {
         expect(view.outdated).toBe(false);
         expect(view.story_summary).toBe('Lucian worked through 1 memories.');
         expect(view.scene_summary).toBe('');
-        expect(fake.readValue('Chat A', 'archivist__compiled_story_summary')).toBe('');
-        expect(fake.readValue('Chat A', 'archivist__compiled_world')).toEqual([]);
+        expect(fake.readValue('Chat A', 'ar__compiled_story_summary')).toBe('');
+        expect(fake.readValue('Chat A', 'ar__compiled_world')).toEqual([]);
         expect(view.timeline).toHaveLength(1);
         expect(view.tension).toEqual([{ message_index: 1, threat: 2, uncertainty: 3, emotional: 4, overall: 3, reason: 'Lucian is stretched thin.' }]);
         expect(view.tension_now).toEqual(view.tension[0]);
-        expect(fake.readValue('Chat A', 'archivist__compiled_tension')).toEqual([]);
+        expect(fake.readValue('Chat A', 'ar__compiled_tension')).toEqual([]);
         expect(await getCompiledMemory('Chat A')).toEqual(view);
     });
 
@@ -747,7 +762,7 @@ describe('compiling through the independent preset', () => {
         await compileOpenChat();
         await store([{ text: 'two', source_message_id: 'Chat A#1@d1' }]);
 
-        fake.respond = async () => ({ archivist__compiled_facts: [], archivist__compiled_relationships: [] });
+        fake.respond = async () => ({ ar__compiled_facts: [], ar__compiled_relationships: [] });
         await compileOpenChat();
         expect(getCompilerStatus()).toMatchObject({ outcome: 'failed', error: expect.stringContaining('dropped every fact') });
 

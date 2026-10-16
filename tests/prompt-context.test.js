@@ -84,6 +84,22 @@ describe('buildPromptContext', () => {
         for (const text of Object.values(out).filter(Boolean)) expect(text.startsWith(`${REFERENCE_MARKER}\n`)).toBe(true);
     });
 
+    it('lists standing promises, then broken ones - not those kept or released', () => {
+        const promise = (name, status, extra = {}) => ({ kind: 'promise', name, text: `${name}.`, status, made_by: [], made_to: [], ...extra });
+        const withPromises = buildPromptContext({ ...view, world: { ...view.world, promise: [
+            promise('Old oath', 'broken', { made_by: [{ name: 'Zeno' }] }),
+            promise('Serve the Mnemos', 'pending', { made_by: [{ name: 'gremlin (lead)' }], made_to: [{ name: 'Syrvanus Voxaris' }] }),
+            promise('Done deal', 'kept'),
+            promise('Let go', 'released'),
+        ] } }, { present: [syr] });
+        expect(body(withPromises.ctx_promises)).toBe([
+            'Promises, oaths and vows:',
+            '- Serve the Mnemos: Serve the Mnemos. Made by gremlin (lead) to Syrvanus Voxaris.',
+            '- (BROKEN) Old oath: Old oath. Made by Zeno.',
+        ].join('\n'));
+        expect(out.ctx_promises).toBe('');
+    });
+
     it('leaves an old scene summary out of the current scene', () => {
         const old = buildPromptContext({ ...view, scene_summary_at: 5 }, { present: [syr] });
         expect(body(old.ctx_scene)).toBe(['Current scene:', 'Present: Syrvanus Voxaris.', '- It is night.', 'Just happened (oldest first):', '- The gremlins revealed themselves.'].join('\n'));
@@ -129,8 +145,8 @@ describe('buildPromptContext', () => {
 
 describe('the prompt context in State Engine, for Curator', () => {
     it('offers each block to Curator', () => {
-        expect(CONTEXT_CAPABILITIES).toContain('curator.inject:archivist__ctx_scene_relationships');
-        expect(CONTEXT_CAPABILITIES).toContain('curator.inject.role:user:archivist__ctx_scene_relationships');
+        expect(CONTEXT_CAPABILITIES).toContain('curator.inject:ar__ctx_scene_relationships');
+        expect(CONTEXT_CAPABILITIES).toContain('curator.inject.role:user:ar__ctx_scene_relationships');
         expect(CONTEXT_CAPABILITIES).toHaveLength(CONTEXT_BLOCKS.length * 2);
     });
 
@@ -138,8 +154,8 @@ describe('the prompt context in State Engine, for Curator', () => {
         const fake = resetFakeStateEngine();
         fake.addObject('chr_l', 'character', 'Lucian');
         fake.respond = async () => ({
-            archivist__compiled_facts: [{ text: 'Lucian works at the gym.', classification: 'PERMANENT', entities: ['Lucian'], sources: ['m1'] }],
-            archivist__compiled_story_summary: 'Lucian started at the gym.',
+            ar__compiled_facts: [{ text: 'Lucian works at the gym.', classification: 'PERMANENT', entities: ['Lucian'], sources: ['m1'] }],
+            ar__compiled_story_summary: 'Lucian started at the gym.',
         });
         getContext().chat = [{ name: 'User', is_user: true, mes: 'hi', send_date: 'd0' }, { name: 'Lucian', mes: 'Lucian works.', send_date: 'd1' }];
         Object.assign(getSettings(), { enabled: true, compileWorld: false });
@@ -149,7 +165,7 @@ describe('the prompt context in State Engine, for Curator', () => {
         await compileOpenChat();
 
         await syncPromptContext();
-        expect(fake.readValue('Chat A', 'archivist__ctx_story_summary')).toBe(`${REFERENCE_MARKER}\nStory so far:\nLucian started at the gym.`);
+        expect(fake.readValue('Chat A', 'ar__ctx_story_summary')).toBe(`${REFERENCE_MARKER}\nStory so far:\nLucian started at the gym.`);
         const writes = () => fake.calls.filter((c) => c.name === 'setVariableValue' && String(c.args[1]?.variableName ?? '').startsWith('ctx_')).length;
         const before = writes();
         await syncPromptContext();

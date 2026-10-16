@@ -15,8 +15,19 @@
 // that would crash the whole extension outright. A dynamic import only
 // runs, and only fails, when claimNamespace() is actually called - which
 // src/extension.js only does after confirming State Engine is present.
-const API_PATH = '../../../SillyTavern-StateEngine/src/api/index.js';
+import { LOG_PREFIX } from '../constants.js';
+
+const API_PATH ='../../../SillyTavern-StateEngine/src/api/index.js';
 const IDENTITY_PATH = '../../../SillyTavern-StateEngine/src/api/identity.js';
+
+// Namespaces Archivist claimed in earlier versions. State Engine lets an
+// extension own only one namespace, so an install that still holds one of
+// these must release it before the current NAMESPACE can be claimed.
+// Releasing deletes the old namespace's presets and their stored values -
+// only the extraction buffers and prompt-context copies, which Archivist
+// rebuilds on its own (memories and compiled data live in Archivist's own
+// chat files). The presets' prompt instructions return to the defaults.
+const LEGACY_NAMESPACES = ['archivist'];
 
 // Claims `namespace` for `extensionId`. Idempotent for the SAME
 // extensionId re-claiming the same namespace on a later page load;
@@ -26,5 +37,10 @@ const IDENTITY_PATH = '../../../SillyTavern-StateEngine/src/api/identity.js';
 export async function claimNamespace(extensionId, namespace) {
     const { stateEngine } = await import(API_PATH);
     const { ensureInstanceId } = await import(IDENTITY_PATH);
+    const owned = stateEngine.findExtensionRecord(extensionId);
+    if (owned && owned.namespace !== namespace && LEGACY_NAMESPACES.includes(owned.namespace)) {
+        stateEngine.unregisterExtension(extensionId);
+        console.log(`${LOG_PREFIX} released old namespace "${owned.namespace}" to claim "${namespace}".`);
+    }
     return stateEngine.createNamespace(extensionId, ensureInstanceId(), namespace);
 }

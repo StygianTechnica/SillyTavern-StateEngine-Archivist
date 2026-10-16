@@ -37,7 +37,7 @@ export const IMPORTANCE_LEVELS = Object.freeze(['low', 'medium', 'high']);
 // spec's "etc."), so this list is a suggestion, not a whitelist.
 // plan: a course of action the characters lay out or agree on - kept whole,
 // its steps in order, so the compiler can follow it as a quest.
-export const KNOWN_SUBTYPES = Object.freeze(['event', 'fact', 'relationship', 'secret', 'plan']);
+export const KNOWN_SUBTYPES = Object.freeze(['event', 'fact', 'relationship', 'secret', 'plan', 'promise']);
 
 // Prioritization tags. Only these are kept - a closed list, so they can be
 // filtered on.

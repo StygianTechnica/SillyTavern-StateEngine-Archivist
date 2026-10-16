@@ -19,3 +19,20 @@ export async function confirmAction(question) {
     }
     return window.confirm(question);
 }
+
+// A line of text from the user, through SillyTavern's input popup when it
+// is there (window.prompt otherwise), starting from `initial`. Resolves to
+// the text, or null when cancelled.
+export async function askText(question, initial = '') {
+    try {
+        const { callGenericPopup, POPUP_TYPE } = SillyTavern.getContext();
+        if (typeof callGenericPopup === 'function' && POPUP_TYPE) {
+            const html = `<div style="white-space: pre-wrap; text-align: left;">${escapeHtml(question)}</div>`;
+            const result = await callGenericPopup(html, POPUP_TYPE.INPUT, initial);
+            return typeof result === 'string' ? result : null;
+        }
+    } catch {
+        // Fall through to the browser's own prompt.
+    }
+    return window.prompt(question, initial);
+}

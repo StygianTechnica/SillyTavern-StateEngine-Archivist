@@ -15,6 +15,8 @@
 //                       SillyTavern records on each reply (message.extra.model)
 //   phraseTicIgnored: [key]  phrases the user stopped tracking - never found
 //                       or watched again, for any model
+//   phraseTicPinned: [{ phrase, key }]  phrases the user pinned - always
+//                       in the prompt block, in every chat (MAX_SHOWN at most)
 // so it costs no file writes and is never caught up in a compile's own
 // save. Announced on SillyTavern's event bus (PHRASE_TICS_CHANGED_EVENT),
 // for the prompt block (src/context/) and the memory browser.
@@ -23,7 +25,7 @@ import { LOG_PREFIX } from '../constants.js';
 import { getSettings, saveSettings } from '../settings.js';
 import { getCurrentChatRef, chatKeyFor, getChatEntry, updateChatEntry } from '../memory/registry.js';
 import { isStoryReply, lastReplyIndex, sourceMessageId } from '../extraction/messages.js';
-import { TIC_WINDOW, DEFAULT_WATCH, findCandidates, storyWordsOf, addFound, updateForReply, watchEntry } from './phrase-tics.js';
+import { TIC_WINDOW, DEFAULT_WATCH, MAX_COUNT, MAX_SHOWN, findCandidates, storyWordsOf, addFound, updateForReply, watchEntry } from './phrase-tics.js';
 
 export const PHRASE_TICS_CHANGED_EVENT = 'archivist_phrase_tics_changed';
 
@@ -152,14 +154,87 @@ export function recordFoundTics(chatKey, found, model = currentModel()) {
     if (added.length) setWatchList(model, [...watch, ...added]);
 }
 
-// The user stops tracking a tic (the memory browser): gone from the chat
-// and the watch list, and never found or watched again.
+// The user stops tracking a tic (the memory browser): gone from the chat,
+// the watch lists and the pins, and never found or watched again.
 export function removePhraseTic(chatKey, key) {
     const state = stateOf(chatKey);
     const tics = state.tics.filter((t) => t.key !== key);
     getSettings().phraseTicIgnored = [...ignoredKeys().add(key)];
     for (const model of Object.keys(watchLists())) setWatchList(model, getWatchList(model).filter((w) => w.key !== key));
+    getSettings().phraseTicPinned = getPinnedTics().filter((p) => p.key !== key);
     save(chatKey, { ...state, tics });
+}
+
+// A phrase the user adds to a chat (the memory browser): in use at once,
+// as if a compile had found it in every reply it scans - so it stays
+// flagged a while before it fades - and on the open model's watch list,
+// so it is caught again in its other chats. No longer ignored. Resolves
+// to its entry ({ phrase, key }), or null when it is too short to match.
+export function addPhraseTic(chatKey, phrase, model = currentModel()) {
+    const entry = watchEntry(phrase);
+    if (!entry || !getChatEntry(chatKey)) return null;
+    const ignored = ignoredKeys();
+    ignored.delete(entry.key);
+    getSettings().phraseTicIgnored = [...ignored];
+    const watch = getWatchList(model);
+    if (!watch.some((w) => w.key === entry.key)) setWatchList(model, [...watch, entry]);
+    const state = stateOf(chatKey);
+    const found = [{ key: entry.key, text: entry.phrase, replies: Array(MAX_COUNT).fill(0) }];
+    save(chatKey, { ...state, tics: addFound(state.tics, found, { now: new Date().toISOString(), counter: state.counter }) });
+    return entry;
+}
+
+// The user's new wording for a tracked phrase (by its key): the chat's
+// tic keeps its count, and the watch lists and pins follow. False when the
+// new wording is too short to match.
+export function editPhraseTic(chatKey, key, phrase) {
+    const entry = watchEntry(phrase);
+    if (!entry) return false;
+    const rename = (item) => (item.key === key ? { ...item, ...entry } : item);
+    for (const model of Object.keys(watchLists())) setWatchList(model, getWatchList(model).map(rename));
+    getSettings().phraseTicPinned = getPinnedTics().map(rename);
+    if (chatKey && getChatEntry(chatKey)) {
+        const state = stateOf(chatKey);
+        save(chatKey, { ...state, tics: state.tics.map(rename) });
+    } else {
+        saveSettings();
+        announce(null);
+    }
+    return true;
+}
+
+// ---- pins: phrases the user never wants to see, shared by every chat
+
+// The pinned phrases: [{ phrase, key }], copied - always first in the
+// prompt block, whether or not a reply used them lately (activeTics()
+// fills what is left of its MAX_SHOWN places).
+export function getPinnedTics() {
+    const saved = getSettings().phraseTicPinned;
+    return (Array.isArray(saved) ? saved : []).filter((p) => p?.key && p?.phrase).map((p) => ({ ...p }));
+}
+
+// Pins a phrase. 'pinned', 'full' (MAX_SHOWN pins already), 'invalid' (too
+// short to match) or 'already'. A pinned phrase is no longer ignored.
+export function pinPhraseTic(phrase) {
+    const entry = watchEntry(phrase);
+    if (!entry) return 'invalid';
+    const pinned = getPinnedTics();
+    if (pinned.some((p) => p.key === entry.key)) return 'already';
+    if (pinned.length >= MAX_SHOWN) return 'full';
+    const ignored = ignoredKeys();
+    ignored.delete(entry.key);
+    getSettings().phraseTicIgnored = [...ignored];
+    getSettings().phraseTicPinned = [...pinned, entry];
+    saveSettings();
+    announce(null);
+    return 'pinned';
+}
+
+// Unpins a phrase (by key); it stays tracked as before.
+export function unpinPhraseTic(key) {
+    getSettings().phraseTicPinned = getPinnedTics().filter((p) => p.key !== key);
+    saveSettings();
+    announce(null);
 }
 
 // Counts the open chat's newest AI reply, once: tics it uses gain (a

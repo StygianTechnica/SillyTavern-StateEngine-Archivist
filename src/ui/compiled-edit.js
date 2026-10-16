@@ -52,6 +52,8 @@ export const EDIT_FIELDS = Object.freeze({
         ['kind', 'Kind', 'select', pairs(WORLD_KINDS)],
         ['status', 'Status', 'text'],
         ['known_by', 'Known by', 'text'],
+        ['made_by', 'Promise made by', 'text'],
+        ['made_to', 'Promise made to', 'text'],
         ['text', 'What is known', 'textarea'],
     ],
     summary: [
@@ -60,10 +62,11 @@ export const EDIT_FIELDS = Object.freeze({
 });
 
 const LIST_FIELDS = new Set(['traits', 'habits', 'stressors', 'motivations']);
+const ENTITY_FIELDS = new Set(['known_by', 'made_by', 'made_to']);
 const PLACEHOLDERS = {
     traits: 'comma-separated', habits: 'comma-separated', stressors: 'comma-separated', motivations: 'comma-separated',
-    known_by: 'names, comma-separated',
-    status: 'secret: kept / revealed / disproven · event: ongoing / over',
+    known_by: 'names, comma-separated', made_by: 'names, comma-separated', made_to: 'names, comma-separated',
+    status: 'secret: kept / revealed / disproven · promise: pending / kept / broken / released · event: ongoing / over',
     goal: 'what the plan works toward (blank if not a plan)',
     steps: 'one per line, in order: [pending|active|done|skipped|failed] what to do | note',
 };
@@ -95,7 +98,7 @@ export function editValues(kind, item) {
     for (const [field] of EDIT_FIELDS[kind] ?? []) {
         const value = item?.[field];
         if (field === 'steps') values[field] = stepsToText(value);
-        else if (field === 'known_by') values[field] = (value ?? []).map((e) => e?.name).filter(Boolean).join(', ');
+        else if (ENTITY_FIELDS.has(field)) values[field] = (value ?? []).map((e) => e?.name).filter(Boolean).join(', ');
         else if (LIST_FIELDS.has(field)) values[field] = (value ?? []).join(', ');
         else values[field] = value === null || value === undefined ? '' : String(value);
     }

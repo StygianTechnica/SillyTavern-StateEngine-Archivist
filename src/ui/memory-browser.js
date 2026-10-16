@@ -24,14 +24,16 @@ import { listChatEntries, getChatEntry, getCurrentChatRef, chatKeyFor } from '..
 import { checkChatsExist } from '../memory/chat-existence.js';
 import { getObject, addObjectAlias } from '../api/objects.js';
 import { groupChats, filterChoices, filterRecords, shortDate, sourceLabel, tensionChart } from './memory-browser-model.js';
-import { confirmAction } from './confirm.js';
+import { confirmAction, askText } from './confirm.js';
 import {
     getCompiledMemory, compileOpenChat, isCompiling, getCompilerStatus, onCompilerStatus, COMPILED_CHANGED_EVENT,
     editCompiledMemoryItem, deleteCompiledMemoryItem, editCompiledMemorySummary, addCompiledMemoryThread,
 } from '../compiler/compiler.js';
 import { findViewItem, editValues, buildEditForm, itemButtons } from './compiled-edit.js';
-import { getChatPhraseTics, removePhraseTic, PHRASE_TICS_CHANGED_EVENT } from '../compiler/phrase-tic-tracker.js';
-import { WARN_AT } from '../compiler/phrase-tics.js';
+import {
+    getChatPhraseTics, removePhraseTic, addPhraseTic, editPhraseTic, getPinnedTics, pinPhraseTic, unpinPhraseTic, PHRASE_TICS_CHANGED_EVENT,
+} from '../compiler/phrase-tic-tracker.js';
+import { WARN_AT, MAX_SHOWN } from '../compiler/phrase-tics.js';
 import { currentStep, TENSION_AXES, TENSION_MAX } from '../compiler/compiled-schema.js';
 import { compilerLine, rebuildLine, failuresReport } from './drawer-model.js';
 import { startCatchUp, cancelCatchUp, getCatchUpProgress, onCatchUpProgress, isCatchUpRunning, rebuildMessagesLeft } from '../extraction/catch-up.js';
@@ -51,6 +53,7 @@ const state = {
     compiled: null,       // the selected chat's compiled view (getCompiledMemory), or null
     editing: null,        // { kind, key, values } - the compiled item being edited
     tics: [],             // the selected chat's phrase tics
+    mapType: 'character', // the relationship map's filter (relationshipMapBlock)
 };
 let overlay = null;
 let loadToken = 0;
@@ -396,6 +399,48 @@ function relationshipRowView(rel, { from }) {
 
 // A grid of who feels what toward whom: rows "from", columns "to", each
 // cell coloured by polarity, its type written in it.
+// The map's type filter: an object type id, or '*' for everything.
+const MAP_ALL = '*';
+
+// A map entity's kind. A name linked to no object counts as a character:
+// in a relationship it is nearly always someone (a persona, a passer-by).
+const mapKind = (entity) => entity.type ?? 'character';
+
+// Which kinds of entity the map can show, as [value, label], and the
+// filter to use - the chosen one while the map still has it, characters
+// otherwise (or everything, when there are none).
+function mapTypeChoices(map) {
+    const types = [...new Set(map.entities.map(mapKind))].sort((a, b) => (a === 'character' ? -1 : b === 'character' ? 1 : a.localeCompare(b)));
+    const choices = [...types.map((t) => [t, words(t)]), [MAP_ALL, 'everything']];
+    const has = (value) => choices.some(([v]) => v === value);
+    const value = has(state.mapType) ? state.mapType : (has('character') ? 'character' : MAP_ALL);
+    return { choices, value };
+}
+
+// The relationship map, filtered to one kind of entity (characters by
+// default): the compiled data keeps every relationship, but a grid of
+// characters against items and places mostly reads as noise.
+function relationshipMapBlock(map) {
+    if (map.entities.length < 2) return null;
+    const { choices, value } = mapTypeChoices(map);
+    const select = el('select', 'text_pole ar-mb-map-type');
+    select.dataset.mb = 'mapType';
+    select.title = 'Which kind of entity the map shows';
+    for (const [v, label] of choices) {
+        const option = el('option', '', label);
+        option.value = v;
+        option.selected = v === value;
+        select.append(option);
+    }
+    const shown = value === MAP_ALL ? map.entities : map.entities.filter((e) => mapKind(e) === value);
+    const block = el('div', 'ar-mb-map-block');
+    const bar = el('label', 'ar-mb-map-filter');
+    bar.append(el('span', '', 'Show: '), select);
+    block.append(bar, relationshipMap({ entities: shown, cells: map.cells })
+        ?? el('div', 'ar-mb-empty', 'Needs relationships between at least two of these.'));
+    return block;
+}
+
 function relationshipMap(map) {
     if (map.entities.length < 2) return null;
     const key = (e) => e.id ?? `name:${e.name.toLowerCase()}`;
@@ -558,6 +603,7 @@ function tensionRows(view) {
 
 const WORLD_SECTIONS = [
     ['secret', 'Secrets', 'No secrets yet.'],
+    ['promise', 'Promises, oaths and vows', 'No promises yet.'],
     ['location', 'Locations', 'No places yet.'],
     ['faction', 'Factions and groups', 'No groups yet.'],
     ['item', 'Items', 'No items yet.'],
@@ -565,18 +611,23 @@ const WORLD_SECTIONS = [
     ['lore', 'Lore and rules', 'No lore yet.'],
 ];
 
+const PROMISE_LABELS = Object.freeze({ pending: 'Pending', kept: 'Kept', broken: 'Broken', released: 'Released' });
+
 function worldRow(entry) {
     return editable('world', entry.id, () => worldRowView(entry));
 }
 
 function worldRowView(entry) {
-    // A secret revealed or disproven, an event over: kept, but settled.
-    const settled = ['revealed', 'disproven', 'over'].includes(entry.status);
-    const row = el('div', `ar-mb-fact${settled ? ' ar-mb-settled' : ''}`);
+    // A secret revealed or disproven, a promise kept or released, an event
+    // over: kept, but settled. A broken promise stands out instead.
+    const settled = ['revealed', 'disproven', 'over'].includes(entry.status) || (entry.kind === 'promise' && ['kept', 'released'].includes(entry.status));
+    const broken = entry.kind === 'promise' && entry.status === 'broken';
+    const row = el('div', `ar-mb-fact${settled ? ' ar-mb-settled' : ''}${broken ? ' ar-mb-broken' : ''}`);
     const meta = el('div', 'ar-mb-record-meta');
     meta.append(el('span', 'ar-mb-strong', entry.name));
     if (entry.entity) meta.append(el('span', 'ar-mb-tag', entry.entity.type ?? 'object'));
-    if (entry.status) meta.append(el('span', '', entry.status));
+    if (entry.kind === 'promise') meta.append(el('span', `ar-mb-status ar-mb-promise-${entry.status || 'pending'}`, PROMISE_LABELS[entry.status] ?? PROMISE_LABELS.pending));
+    else if (entry.status) meta.append(el('span', '', entry.status));
     const link = messageLink(entry.message_range);
     if (link) meta.append(link);
     if (entry.edited_at) meta.append(el('span', 'ar-mb-tag', 'edited'));
@@ -584,6 +635,11 @@ function worldRowView(entry) {
     row.append(meta, el('div', 'ar-mb-record-text', entry.text));
     const knownBy = entry.known_by.map((e) => e.name).filter(Boolean).join(', ');
     if (entry.kind === 'secret') row.append(el('div', 'ar-mb-record-entities', `Known by: ${knownBy || 'nobody named yet'}`));
+    if (entry.kind === 'promise') {
+        const by = (entry.made_by ?? []).map((e) => e.name).filter(Boolean).join(', ');
+        const to = (entry.made_to ?? []).map((e) => e.name).filter(Boolean).join(', ');
+        if (by || to) row.append(el('div', 'ar-mb-record-entities', `Made by ${by || 'someone'}${to ? ` to ${to}` : ''}`));
+    }
     const involved = entry.involved.map((e) => e.name).filter(Boolean).join(', ');
     if (involved) row.append(el('div', 'ar-mb-record-entities', `Connected: ${involved}`));
     return row;
@@ -648,7 +704,7 @@ function renderCompiled() {
         head.append(el('div', 'ar-mb-empty', 'Compiled before character insights, story threads and the world were added - Rebuild to fill them in for the whole chat.'));
     }
     const worldSections = WORLD_SECTIONS.map(([kind, title, emptyText]) => section(title, view.world[kind].map(worldRow), emptyText));
-    const map = relationshipMap(view.relationship_map);
+    const map = relationshipMapBlock(view.relationship_map);
     const suggestions = view.alias_suggestions ?? [];
     list.replaceChildren(
         head,
@@ -663,28 +719,101 @@ function renderCompiled() {
         section('Story threads and quests', [newThreadRow(), ...view.threads.map(threadRow), ...(view.threads.length ? [] : [el('div', 'ar-mb-empty', 'No plot hooks, open threads or quests yet.')])], ''),
         ...worldSections,
         section('Timeline', view.timeline.map(timelineRow), 'No events yet.'),
-        section('Phrase tics', [...state.tics].sort((a, b) => b.count - a.count || String(b.last_used).localeCompare(String(a.last_used))).map(ticRow), 'No repeated stock phrases found in this chat yet.'),
+        section('Phrase tics', ticRows(isOpen), ''),
     );
 }
 
-// A phrase tic: how much it is in use, and a button to forget it (it can
-// be found again later - nothing is banned).
-function ticRow(tic) {
-    const inUse = tic.count >= WARN_AT;
+// The phrase tics: the add and pin buttons (the open chat only - a phrase
+// added is tracked in it), the pinned phrases, then the chat's tics.
+function ticRows(isOpen) {
+    const pinned = getPinnedTics();
+    const pinnedKeys = new Set(pinned.map((p) => p.key));
+    const byKey = new Map(state.tics.map((t) => [t.key, t]));
+    const tics = state.tics.filter((t) => !pinnedKeys.has(t.key))
+        .sort((a, b) => b.count - a.count || String(b.last_used).localeCompare(String(a.last_used)));
+    const add = el('div', 'ar-mb-tic-add');
+    if (isOpen) add.append(ticAddButton('add', 'fa-plus', 'Track a phrase', 'Track a phrase you have noticed: flagged in this chat now, and on this model\'s watch list for its other chats.'));
+    add.append(ticAddButton('pin', 'fa-thumbtack', `Pin a phrase (${pinned.length}/${MAX_SHOWN})`, `Pin a phrase you never want to see: it always takes one of the ${MAX_SHOWN} places in the Phrase tics to vary block, in every chat.`));
+    const rows = [add, ...pinned.map((p) => ticRow(byKey.get(p.key) ?? { ...p, count: null }, true)), ...tics.map((t) => ticRow(t, false))];
+    if (rows.length === 1) rows.push(el('div', 'ar-mb-empty', 'No repeated stock phrases found in this chat yet.'));
+    return rows;
+}
+
+function ticAddButton(action, icon, label, title) {
+    const button = el('button', 'menu_button menu_button_icon ar-mb-add');
+    button.type = 'button';
+    button.dataset.mbTicAdd = action;
+    button.title = title;
+    button.append(el('i', `fa-solid ${icon}`), el('span', '', label));
+    return button;
+}
+
+function ticButton(action, key, icon, title) {
+    const button = el('button', `menu_button fa-solid ${icon} ar-mb-item-button`);
+    button.type = 'button';
+    button.title = title;
+    button.dataset.mbTicAction = action;
+    button.dataset.mbTic = key;
+    return button;
+}
+
+// A phrase tic: how much it is in use (a pinned phrase the chat has not
+// used shows no count), with buttons to pin or unpin it, reword it, or
+// forget it (it can be put back on the watch list - nothing is banned).
+function ticRow(tic, pinned) {
+    const inUse = pinned || tic.count >= WARN_AT;
     const row = el('div', `ar-mb-fact${inUse ? '' : ' ar-mb-settled'}`);
     const meta = el('div', 'ar-mb-record-meta');
-    meta.append(el('span', 'ar-mb-status', inUse ? 'In use' : (tic.count > 0 ? 'Fading' : 'Resting')), el('span', '', `count ${tic.count}`));
+    meta.append(el('span', 'ar-mb-status', pinned ? 'Pinned' : (inUse ? 'In use' : (tic.count > 0 ? 'Fading' : 'Resting'))));
+    if (tic.count !== null) meta.append(el('span', '', `count ${tic.count}`));
     if (tic.last_used) meta.append(el('span', '', `last seen ${shortDate(tic.last_used)}`));
-    const remove = el('button', 'menu_button fa-solid fa-trash-can ar-mb-item-button');
-    remove.type = 'button';
-    remove.title = 'Stop tracking this phrase - in every chat, for good (put it back on the drawer\'s watch list to undo)';
-    remove.dataset.mbTic = tic.key;
     const buttons = el('span', 'ar-mb-item-buttons');
-    buttons.append(remove);
+    buttons.append(
+        pinned ? ticButton('unpin', tic.key, 'fa-thumbtack ar-mb-pinned', 'Unpin: back to being flagged only while in use')
+            : ticButton('pin', tic.key, 'fa-thumbtack', `Pin: always ask the model to avoid it, in every chat (${MAX_SHOWN} pins at most)`),
+        ticButton('edit', tic.key, 'fa-pen', 'Reword the phrase'),
+        ticButton('remove', tic.key, 'fa-trash-can', 'Stop tracking this phrase - in every chat, for good (put it back on the drawer\'s watch list to undo)'),
+    );
     meta.append(buttons);
     row.append(meta, el('div', 'ar-mb-record-text', tic.phrase));
-    row.title = inUse ? 'The Curator block Phrase tics to vary asks the model to word this differently for now.' : 'Kept: flagged again the moment a reply uses it.';
+    row.title = pinned ? 'Pinned: the Curator block Phrase tics to vary always asks the model to avoid it.'
+        : (inUse ? 'The Curator block Phrase tics to vary asks the model to word this differently for now.' : 'Kept: flagged again the moment a reply uses it.');
     return row;
+}
+
+const TOO_SHORT = 'A phrase needs at least two words to be matched safely.';
+
+async function onTicAdd(action) {
+    const pin = action === 'pin';
+    const text = await askText(pin
+        ? `A phrase to pin - always asked to be avoided, in every chat (${getPinnedTics().length} of ${MAX_SHOWN} pins used):`
+        : 'A phrase to track in this chat (and on this model\'s watch list):');
+    if (text === null || !text.trim()) return;
+    if (pin) {
+        const outcome = pinPhraseTic(text);
+        if (outcome === 'invalid') toastr.warning(TOO_SHORT, 'Archivist');
+        else if (outcome === 'full') toastr.warning(`All ${MAX_SHOWN} pins are in use - unpin one first.`, 'Archivist');
+    } else if (!addPhraseTic(state.selectedKey, text)) {
+        toastr.warning(TOO_SHORT, 'Archivist');
+    }
+    void loadSelected();
+}
+
+async function onTicAction(action, key) {
+    const tic = state.tics.find((t) => t.key === key) ?? getPinnedTics().find((p) => p.key === key);
+    if (!tic) return;
+    if (action === 'remove') {
+        removePhraseTic(state.selectedKey, key);
+    } else if (action === 'unpin') {
+        unpinPhraseTic(key);
+    } else if (action === 'pin') {
+        if (pinPhraseTic(tic.phrase) === 'full') toastr.warning(`All ${MAX_SHOWN} pins are in use - unpin one first.`, 'Archivist');
+    } else if (action === 'edit') {
+        const text = await askText('The phrase, reworded:', tic.phrase);
+        if (text === null || !text.trim() || text.trim() === tic.phrase) return;
+        if (!editPhraseTic(state.selectedKey, key, text)) toastr.warning(TOO_SHORT, 'Archivist');
+    }
+    void loadSelected();
 }
 
 function summaryRow(text, which) {
@@ -905,10 +1034,14 @@ function onClick(e) {
         void removeItem(remove.dataset.mbRemove, remove.dataset.mbKey);
         return;
     }
+    const ticAdd = e.target.closest('[data-mb-tic-add]');
+    if (ticAdd) {
+        void onTicAdd(ticAdd.dataset.mbTicAdd);
+        return;
+    }
     const tic = e.target.closest('[data-mb-tic]');
     if (tic) {
-        removePhraseTic(state.selectedKey, tic.dataset.mbTic);
-        void loadSelected();
+        void onTicAction(tic.dataset.mbTicAction, tic.dataset.mbTic);
         return;
     }
     if (e.target.closest('[data-mb-save]')) {
@@ -990,6 +1123,12 @@ function onInput(e) {
     const field = e.target.dataset?.mbField;
     if (field && state.editing) {
         state.editing.values[field] = e.target.value;
+        return;
+    }
+    if (e.target.dataset?.mb === 'mapType') {
+        if (e.type !== 'change') return;
+        state.mapType = e.target.value;
+        renderCompiled();
         return;
     }
     const check = e.target.dataset?.mbCheck;

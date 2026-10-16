@@ -57,6 +57,8 @@ const DEFAULTS = {
     trackPhraseTics: true,
     // ...and a tic loses a count after this many AI replies without it.
     phraseTicFadeAfter: 10,
+    // Phrases the user pinned: always in the prompt block (phrase-tic-tracker.js).
+    phraseTicPinned: [],
 };
 
 // Returns the live settings object, creating it (and filling in any

@@ -18,7 +18,7 @@ import { listObjects } from '../api/objects.js';
 import { getCurrentChatRef } from '../memory/registry.js';
 import { MEMORIES_CHANGED_EVENT } from '../memory/archivist.js';
 import { getCompiledMemory, COMPILED_CHANGED_EVENT } from '../compiler/compiler.js';
-import { getChatPhraseTics, PHRASE_TICS_CHANGED_EVENT } from '../compiler/phrase-tic-tracker.js';
+import { getChatPhraseTics, getPinnedTics, PHRASE_TICS_CHANGED_EVENT } from '../compiler/phrase-tic-tracker.js';
 import { nameKey } from '../compiler/entity-link.js';
 import { LIVE_PRESET } from '../extraction/live.js';
 import { CONTEXT_BLOCKS, buildPromptContext } from './prompt-context.js';
@@ -64,7 +64,7 @@ export async function syncPromptContext() {
     if (!ref || !getSettings().enabled) return;
     try {
         const view = await getCompiledMemory();
-        const texts = buildPromptContext(view, { ...await whoIsHere(ref.chatId, view), phraseTics: getChatPhraseTics() });
+        const texts = buildPromptContext(view, { ...await whoIsHere(ref.chatId, view), phraseTics: getChatPhraseTics(), pinnedTics: getPinnedTics() });
         for (const [name] of CONTEXT_BLOCKS) {
             const current = await getVariableValue(ref.chatId, name);
             if ((current ?? '') === texts[name]) continue;

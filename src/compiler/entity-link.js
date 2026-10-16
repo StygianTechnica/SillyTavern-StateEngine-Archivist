@@ -12,6 +12,8 @@
 // whenever the compiled memory is read (relinkCompiled): an object approved
 // after the compile still gets its links.
 
+import { UNLINKED_WORLD_KINDS } from './compiled-schema.js';
+
 const ARTICLES = new Set(['a', 'an', 'the']);
 
 // "gremlin (lead)" and "A lead gremlin" -> "gremlin lead"; '' for none.
@@ -85,7 +87,7 @@ export function mergeQualifiedNames(compiled) {
     for (const r of compiled.relationships ?? []) all.push(r.from, r.to);
     for (const c of compiled.characters ?? []) all.push(c.entity);
     for (const t of compiled.threads ?? []) all.push(...(t.involved ?? []));
-    for (const w of compiled.world ?? []) all.push(...(w.known_by ?? []), ...(w.involved ?? []));
+    for (const w of compiled.world ?? []) all.push(...(w.known_by ?? []), ...(w.made_by ?? []), ...(w.made_to ?? []), ...(w.involved ?? []));
     // The plain names, linked ones first.
     const plain = new Map();
     for (const e of all.filter(Boolean).sort((a, b) => Number(!!b.id) - Number(!!a.id))) {
@@ -136,7 +138,9 @@ export function mergeQualifiedNames(compiled) {
         relationships,
         characters,
         threads: (compiled.threads ?? []).map((t) => ({ ...t, involved: canonicalList(t.involved) })),
-        world: (compiled.world ?? []).map((w) => ({ ...w, known_by: canonicalList(w.known_by), involved: canonicalList(w.involved) })),
+        world: (compiled.world ?? []).map((w) => ({
+            ...w, known_by: canonicalList(w.known_by), made_by: canonicalList(w.made_by ?? []), made_to: canonicalList(w.made_to ?? []), involved: canonicalList(w.involved),
+        })),
     };
 }
 
@@ -154,8 +158,10 @@ export function relinkCompiled(compiled, lookup) {
         threads: (compiled.threads ?? []).map((t) => ({ ...t, entity: t.entity ?? questOrNull(t.title, lookup), involved: relinkAll(t.involved, lookup) })),
         world: (compiled.world ?? []).map((w) => ({
             ...w,
-            entity: w.entity ? relink(w.entity, lookup) : (w.kind === 'secret' ? null : linkedOrNull(w.name, lookup)),
+            entity: w.entity ? relink(w.entity, lookup) : (UNLINKED_WORLD_KINDS.has(w.kind) ? null : linkedOrNull(w.name, lookup)),
             known_by: relinkAll(w.known_by, lookup),
+            made_by: relinkAll(w.made_by ?? [], lookup),
+            made_to: relinkAll(w.made_to ?? [], lookup),
             involved: relinkAll(w.involved, lookup),
         })),
     };
@@ -173,7 +179,7 @@ function entitiesOf(compiled) {
     for (const r of compiled.relationships ?? []) out.push(r.from, r.to);
     for (const c of compiled.characters ?? []) out.push(c.entity);
     for (const t of compiled.threads ?? []) out.push(t.entity, ...(t.involved ?? []));
-    for (const w of compiled.world ?? []) out.push(w.entity, ...(w.known_by ?? []), ...(w.involved ?? []));
+    for (const w of compiled.world ?? []) out.push(w.entity, ...(w.known_by ?? []), ...(w.made_by ?? []), ...(w.made_to ?? []), ...(w.involved ?? []));
     return out.filter(Boolean);
 }
 

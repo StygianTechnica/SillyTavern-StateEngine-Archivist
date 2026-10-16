@@ -9,9 +9,9 @@ export const EXTENSION_ID = 'SillyTavern-StateEngine-Archivist';
 
 // Prefixes every variable and preset Archivist creates through the State
 // Engine (e.g. a variable named "memories" is stored as
-// "archivist__memories"). Letters and digits only, starting with a
+// "ar__memories"). Letters and digits only, starting with a
 // letter - see the State Engine API Reference, "Namespace Model".
-export const NAMESPACE = 'archivist';
+export const NAMESPACE = 'ar';
 
 // Prefix for Archivist's console output.
 export const LOG_PREFIX = '[Archivist]';

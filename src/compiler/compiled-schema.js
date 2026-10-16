@@ -205,16 +205,47 @@ export function normalizeSecretStatus(value) {
     return 'kept';
 }
 
+// A promise (an oath, a vow, a pledge, a deal) is pending (standing, not
+// yet fulfilled), kept, broken, or released (called off, or let go by the
+// one it was made to). Never dropped, like a secret. Anything unknown is
+// pending.
+export const PROMISE_STATUSES = Object.freeze(['pending', 'kept', 'broken', 'released']);
+
+export function normalizePromiseStatus(value) {
+    const token = String(value ?? '').trim().toLowerCase();
+    if (PROMISE_STATUSES.includes(token)) return token;
+    // "unfulfilled", "not yet kept", "not broken": still standing.
+    if (/^(un|not )/.test(token)) return 'pending';
+    if (/^(broke|break|betray|violat|fail|forsw|reneg|abandon)/.test(token)) return 'broken';
+    if (/^(fulfil|honou?r|complet|done|met|satisf|carried out|upheld)/.test(token)) return 'kept';
+    if (/^(releas|withdr|cancel|forgiv|void|annul|dissol|lifted|rescind|absolv|called off)/.test(token)) return 'released';
+    return 'pending';
+}
+
 // What a world entry is. A closed list, so a UI can group by it; near
 // words are mapped onto it, anything else is lore.
-export const WORLD_KINDS = Object.freeze(['secret', 'location', 'faction', 'item', 'event', 'lore']);
+export const WORLD_KINDS = Object.freeze(['secret', 'promise', 'location', 'faction', 'item', 'event', 'lore']);
 const WORLD_KIND_WORDS = Object.freeze({
     secrets: 'secret', place: 'location', places: 'location', locations: 'location', area: 'location', building: 'location',
     group: 'faction', groups: 'faction', factions: 'faction', organization: 'faction', organisation: 'faction', business: 'faction', team: 'faction', gang: 'faction',
     object: 'item', objects: 'item', items: 'item', thing: 'item',
     'world event': 'event', events: 'event', condition: 'event', situation: 'event',
     rule: 'lore', rules: 'lore', custom: 'lore', norm: 'lore', setting: 'lore',
+    promises: 'promise', oath: 'promise', oaths: 'promise', vow: 'promise', vows: 'promise', pledge: 'promise', pledges: 'promise',
+    pact: 'promise', deal: 'promise', bargain: 'promise', 'sworn oath': 'promise', 'marriage vows': 'promise',
 });
+
+// World kinds named by what they say - a secret by what it hides, a
+// promise by what it binds someone to - never linked to an object by name.
+export const UNLINKED_WORLD_KINDS = new Set(['secret', 'promise']);
+
+// The status of a world entry of `kind`, normalized where its kind has a
+// fixed list (a secret, a promise); lower case otherwise.
+export function normalizeWorldStatus(kind, value) {
+    if (kind === 'secret') return normalizeSecretStatus(value);
+    if (kind === 'promise') return normalizePromiseStatus(value);
+    return String(value ?? '').trim().toLowerCase();
+}
 
 export function normalizeWorldKind(value) {
     const token = String(value ?? '').trim().toLowerCase().replace(/[\s_-]+/g, ' ');

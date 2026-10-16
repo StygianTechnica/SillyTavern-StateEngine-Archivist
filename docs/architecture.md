@@ -11,7 +11,7 @@ capabilities every State Engine extension sets up first.
 ```
 src/index.js                  entry point (manifest "js"); calls initExtension()
 src/extension.js              startup order - see "Extension lifecycle"
-src/constants.js              EXTENSION_ID, NAMESPACE ("archivist"), LOG_PREFIX
+src/constants.js              EXTENSION_ID, NAMESPACE ("ar"), LOG_PREFIX
 src/settings.js               extensionSettings.archivist: switches + the chat registry
 
 src/memory/                   the memory core - no State Engine calls
@@ -107,7 +107,7 @@ hand out copies. See [api.md](api.md).
 
 `src/extraction/live.js`. Archivist owns a regular State Engine preset,
 **Archivist Recent Memory Collection** (`triggers: ['ai']`, hidden from the
-tracker), with one variable, `archivist__memories`: a prompted list of
+tracker), with one variable, `ar__memories`: a prompted list of
 records (`itemType: 'record'`). While Archivist is enabled the preset is
 active for the open chat, so State Engine fills the variable during its
 ordinary per-message update - no extra model call.
@@ -175,7 +175,7 @@ risk: it lives in Archivist's files, not in State Engine variables.
 
 `src/extraction/catch-up.js` (spec sections 5 and 6). An **independent**
 State Engine preset, **Archivist History Catch-Up**, with its own variable
-`archivist__catchup_memories` (variable names are unique across presets) -
+`ar__catchup_memories` (variable names are unique across presets) -
 kept apart from live extraction so both run at once.
 
 A pass, for the chat open when it starts:
@@ -565,7 +565,7 @@ confirmed present.
 ## Namespaces
 
 A namespace is the prefix every variable and preset your extension
-creates through the State Engine carries - `archivist__memories`, not
+creates through the State Engine carries - `ar__memories`, not
 `memories`. It exists so two different extensions (or the same extension
 loaded twice by mistake) can never collide on a variable name.
 
@@ -610,7 +610,7 @@ extension discoverable, so Archivist does it unconditionally.
 A call to `registerExtension()` REPLACES any previous registration for
 your `extensionId` - it does not merge field-by-field with what you
 registered on an earlier load. If you later add real variables, list
-their fully-qualified names (`archivist__memories`, not `memories`) in
+their fully-qualified names (`ar__memories`, not `memories`) in
 `metadata.variables` so other extensions can see what you expose.
 
 ## Capabilities

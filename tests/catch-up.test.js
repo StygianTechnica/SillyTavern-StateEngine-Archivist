@@ -16,7 +16,7 @@ import {
 
 vi.mock('../src/api/state-engine.js', () => import('./harness/state-engine-mock.js'));
 
-const VAR = 'archivist__catchup_memories';
+const VAR = 'ar__catchup_memories';
 const msg = (i, extra = {}) => ({ name: i % 2 ? 'Mira' : 'User', is_user: i % 2 === 0, mes: `message ${i}`, send_date: `d${i}`, ...extra });
 const chatOf = (n) => Array.from({ length: n }, (_, i) => msg(i));
 const rec = (chatId, i, chat, extra = {}) => ({ id: `m${i}`, subtype: 'event', scope: 'scene', importance: 'medium', text: `memory ${i}`, entity_ids: [], source_message_id: sourceMessageId(chatId, i, chat[i]), chat_id: chatId, created_at: 't', ...extra });
@@ -108,7 +108,7 @@ describe('the catch-up pass', () => {
 
     it('creates its own independent preset with the catch-up header and variable', async () => {
         await run();
-        const preset = fake.presets.get(`archivist.${CATCH_UP_PRESET}`);
+        const preset = fake.presets.get(`ar.${CATCH_UP_PRESET}`);
         expect(preset.independentPreset).toBe(true);
         expect(preset.independentConfig.promptedHeader).toBe(CATCH_UP_HEADER);
         expect(preset.variables.get(VAR)).toMatchObject({ type: 'array', itemType: 'record', prompted: { newEachTurn: true } });
@@ -252,7 +252,7 @@ describe('rebuilding the memories from the chat', () => {
             { text: 'other swipe of 5', source_message_id: 'Chat A#5@swipe' },
         ]);
         fake.respond = async (context) => {
-            if (!context.includes('Chat messages:')) return { archivist__compiled_facts: [{ text: 'compiled', sources: ['m1'] }] };
+            if (!context.includes('Chat messages:')) return { ar__compiled_facts: [{ text: 'compiled', sources: ['m1'] }] };
             const indexes = [...context.matchAll(/\[#(\d+)\]/g)].map((m) => Number(m[1]));
             return [{ text: `new ${indexes.join('+')}`, message_index: indexes[1] }];
         };

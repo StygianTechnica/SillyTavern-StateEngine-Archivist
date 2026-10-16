@@ -7,7 +7,7 @@
 // updates every other active preset's variables (spec section 5,
 // "During normal story progression", steps 1-4):
 //
-//   1. State Engine extracts memory into archivist__memories
+//   1. State Engine extracts memory into ar__memories
 //   2. its change event reaches harvest(), which reads and CLEARS the
 //      variable, then converts the items into memory record fields
 //   3. addMemoryRecords() appends them to the chat's memories.json
@@ -57,7 +57,8 @@ const OLD_LIVE_PRESET_NAMES = ['Live'];
 // 5: the prompt-context variables' labels (no "Archivist:" prefix).
 // 6: the scene and scene-characters descriptions.
 // 7: plans, as one memory with their steps in order.
-export const LIVE_VARIABLE_VERSION = 7;
+// 8: promises, oaths and vows; the promises prompt-context variable.
+export const LIVE_VARIABLE_VERSION = 8;
 
 const harvests = new Map(); // chatId -> { running, again, retry: items[] }
 

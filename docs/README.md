@@ -60,7 +60,7 @@ Archivist decides what is asked for, then stores what comes back.
 
 When Archivist is enabled, it switches on its own State Engine preset,
 **Archivist Recent Memory Collection**, for the open chat. That preset
-holds one variable, `archivist__memories`, which State Engine fills in
+holds one variable, `ar__memories`, which State Engine fills in
 during its regular update after each AI reply - in the **same** model call
 as your other variables, so there is no extra call per message. Archivist
 then reads it, stores the memories against that reply, and empties it for
@@ -155,11 +155,14 @@ memories into structured knowledge:
   (friend, mentor, colleague, rival... in the model's own words), its
   polarity from -3 hostile to +3 devoted, its intensity (low / medium /
   high) and whether it is warming or cooling - with a **relationship map**,
-  a grid of who feels what toward whom
+  a grid of who feels what toward whom (characters by default - *Show*
+  switches it to another kind of object, or everything)
 - **Story threads and quests** - plot hooks, unresolved threads, quest
   seeds, with their status (open, active, resolved, abandoned) and progress
-- **The world** - secrets and who knows them, locations, factions and
-  groups, items, ongoing world events, lore and rules of the setting
+- **The world** - secrets and who knows them; promises, oaths and vows -
+  who made them, to whom, and whether they are pending, kept, broken or
+  released; locations, factions and groups, items, ongoing world events,
+  lore and rules of the setting
 - **Timeline** - the story's events, in order: major ones marked, who
   witnessed them, their tone, and when the message was written
 
@@ -241,6 +244,8 @@ ones you want and drag them where they belong:
 - **Recent events** - the latest events, with who witnessed them
 - **Secrets (narrator only)** - secrets still kept and who knows them:
   knowledge for the narrator, not something the characters know
+- **Promises and vows** - promises, oaths and vows still standing, then the
+  ones broken (a broken vow has consequences), with who made them to whom
 - **Phrase tics to vary** - stock phrases the narration has been repeating
   ("a wry smile tugged at his lips"), with a gentle request to word things
   differently for now - see below
@@ -270,8 +275,16 @@ the model to vary it for a while. Nothing is banned or rewritten.
   gestures or cues, keeping character voice and scene logic.
 
 They are listed, with their counts, at the end of **Review memories ->
-Compiled**, where the bin forgets one. Turn it all off with **Track phrase
-tics** in the drawer.
+Compiled**, where you can also:
+
+- **Track a phrase** you noticed that the compiler missed: it is flagged in
+  the chat at once and goes on the model's watch list.
+- **Pin a phrase** (the pin button on a row, or *Pin a phrase*): it always
+  takes one of the 8 places in the **Phrase tics to vary** block, in every
+  chat, whether or not a reply used it lately. Up to 8 pins.
+- **Reword** a phrase (the pen), or **forget** it for good (the bin).
+
+Turn it all off with **Track phrase tics** in the drawer.
 
 ### The memory browser
 

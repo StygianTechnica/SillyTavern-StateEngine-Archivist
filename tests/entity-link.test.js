@@ -113,8 +113,8 @@ describe('getCompiledMemory', () => {
         const fake = resetFakeStateEngine();
         fake.addObject('chr_s', 'character', 'Syrvanus Voxaris');
         fake.respond = async () => ({
-            archivist__compiled_facts: [{ text: 'The gremlins offered help.', entities: ['gremlin (lead)'], sources: ['m1'] }],
-            archivist__compiled_relationships: [{ from: 'Syrvanus Voxaris', to: 'gremlin (lead)', type: 'ally', polarity: 2, sources: ['m1'] }],
+            ar__compiled_facts: [{ text: 'The gremlins offered help.', entities: ['gremlin (lead)'], sources: ['m1'] }],
+            ar__compiled_relationships: [{ from: 'Syrvanus Voxaris', to: 'gremlin (lead)', type: 'ally', polarity: 2, sources: ['m1'] }],
         });
         getContext().chat = [{ name: 'User', is_user: true, mes: 'hi', send_date: 'd0' }, { name: 'Bot', mes: 'Gremlins.', send_date: 'd1' }];
         Object.assign(getSettings(), { enabled: true, compileWorld: false });

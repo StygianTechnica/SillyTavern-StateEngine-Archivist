@@ -80,7 +80,7 @@ describe('in a chat', () => {
     it('links them before a compile', async () => {
         await addMemoryRecords(getCurrentChatRef(), [{ text: 'The Hollow Chronicler blocked the door.', source_message_id: 'Chat A#1@d1' }]);
         fake.addObject('crt_hollow', 'creature', 'The Hollow Chronicler');
-        fake.respond = async () => ({ archivist__compiled_facts: [{ text: 'x', sources: ['m1'] }] });
+        fake.respond = async () => ({ ar__compiled_facts: [{ text: 'x', sources: ['m1'] }] });
         await compileOpenChat();
         expect(getMemoriesForEntity('crt_hollow')).toHaveLength(1);
     });

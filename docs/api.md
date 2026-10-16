@@ -299,6 +299,8 @@ other way - from an object to everything Archivist knows about it:
   threads, quests,        // the threads it is in (a quest object: its own thread, with status and progress)
   world,                  // world entries it is, is part of, or knows (a secret)
   secrets_known,          // the secrets it knows
+  promises_made,          // promises, oaths and vows it made (status: pending | kept | broken | released)
+  promises_received,      // the ones made to it
   memories,               // memory records about it
   witnessed,              // memory records it was present for
   timeline,               // timeline events it is in or witnessed

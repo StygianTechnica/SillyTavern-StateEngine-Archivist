@@ -18,6 +18,7 @@ import { LOG_PREFIX } from '../constants.js';
 import { getAllMemories } from '../memory/archivist.js';
 import { getChatEntry } from '../memory/registry.js';
 import { getObject } from '../api/objects.js';
+import { UNLINKED_WORLD_KINDS } from './compiled-schema.js';
 import { getCompiledMemory, resolveChatKey, entityResolver } from './compiler.js';
 
 const lower = (value) => String(value ?? '').trim().toLowerCase();
@@ -37,7 +38,8 @@ const involves = (items, target) => (items ?? []).some((e) => sameEntity(e, targ
 // memory `records`:
 //   { entity, profile, relationships: [relationship with direction 'out' |
 //     'in' and other], threads, quests, world: [entry], secrets_known:
-//     [entry], memories: [record], witnessed: [record], timeline: [entry],
+//     [entry], promises_made: [entry], promises_received: [entry],
+//     memories: [record], witnessed: [record], timeline: [entry],
 //     compiledAt }
 export function buildDossier(view, records, target) {
     const byId = (field) => (target.id ? records.filter((r) => (r[field] ?? []).includes(target.id)) : []);
@@ -49,7 +51,8 @@ export function buildDossier(view, records, target) {
     const threads = (view?.threads ?? []).filter((t) => sameEntity(t.entity, target) || involves(t.involved, target));
     const world = Object.values(view?.world ?? {}).flat()
         .filter((w) => sameEntity(w.entity, target) || involves(w.involved, target) || involves(w.known_by, target)
-            || (w.kind !== 'secret' && !w.entity && lower(w.name) === lower(target.name)));
+            || involves(w.made_by, target) || involves(w.made_to, target)
+            || (!UNLINKED_WORLD_KINDS.has(w.kind) && !w.entity && lower(w.name) === lower(target.name)));
     return {
         entity: { ...target },
         compiledAt: view?.compiledAt ?? null,
@@ -59,6 +62,8 @@ export function buildDossier(view, records, target) {
         quests: threads.filter((t) => sameEntity(t.entity, target) || t.entity?.type === 'quest' || /quest/.test(t.kind)),
         world,
         secrets_known: world.filter((w) => w.kind === 'secret' && involves(w.known_by, target)),
+        promises_made: world.filter((w) => w.kind === 'promise' && involves(w.made_by, target)),
+        promises_received: world.filter((w) => w.kind === 'promise' && involves(w.made_to, target)),
         memories: byId('entity_ids'),
         witnessed: byId('witness_ids'),
         timeline: (view?.timeline ?? []).filter((t) => (target.id && (t.entity_ids.includes(target.id) || t.witnesses.some((w) => w.id === target.id)))),

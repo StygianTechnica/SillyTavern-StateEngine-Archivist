@@ -7,7 +7,7 @@ import { CONTEXT_BLOCKS } from '../src/context/prompt-context.js';
 
 vi.mock('../src/api/state-engine.js', () => import('./harness/state-engine-mock.js'));
 
-const VAR = 'archivist__memories';
+const VAR = 'ar__memories';
 let fake;
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -27,7 +27,7 @@ beforeEach(async () => {
 describe('ensureLivePreset', () => {
     it('creates a regular preset on the ai trigger, hidden from the tracker, with the memories variable', async () => {
         await ensureLivePreset();
-        const preset = fake.presets.get(`archivist.${LIVE_PRESET}`);
+        const preset = fake.presets.get(`ar.${LIVE_PRESET}`);
         expect(preset).toMatchObject({ triggers: ['ai'], showInTracker: false });
         expect(preset.variables.get(VAR)).toMatchObject({ type: 'array', itemType: 'record', behaviors: { prompted: true } });
         expect(getSettings().liveVariableVersion).toBe(LIVE_VARIABLE_VERSION);
@@ -35,14 +35,14 @@ describe('ensureLivePreset', () => {
 
     it('is idempotent and keeps the user\'s edits while the version is current', async () => {
         await ensureLivePreset();
-        fake.presets.get(`archivist.${LIVE_PRESET}`).variables.get(VAR).prompted.instructions = 'my own wording';
+        fake.presets.get(`ar.${LIVE_PRESET}`).variables.get(VAR).prompted.instructions = 'my own wording';
         await ensureLivePreset();
 
         expect(fake.calls.filter((c) => c.name === 'createPreset')).toHaveLength(1);
         // The memory variable and the prompt-context ones (src/context/), each once.
         expect(fake.calls.filter((c) => c.name === 'createVariable')).toHaveLength(1 + CONTEXT_BLOCKS.length);
         expect(fake.calls.filter((c) => c.name === 'updateVariable')).toHaveLength(0);
-        expect(fake.presets.get(`archivist.${LIVE_PRESET}`).variables.get(VAR).prompted.instructions).toBe('my own wording');
+        expect(fake.presets.get(`ar.${LIVE_PRESET}`).variables.get(VAR).prompted.instructions).toBe('my own wording');
     });
 
     it('updates an existing variable from an older version', async () => {
@@ -59,15 +59,15 @@ describe('ensureLivePreset', () => {
     });
 
     it('renames a preset still called "Live" in place, keeping its activations and edits', async () => {
-        fake.stateEngine.createPreset('x', 'i', { namespace: 'archivist', name: 'Live', triggers: ['ai'] });
-        fake.stateEngine.createVariable('x', 'i', { namespace: 'archivist', presetName: 'Live', name: 'memories', type: 'array', prompted: { instructions: 'my own wording' } });
-        fake.stateEngine.activatePreset('x', 'i', 'Chat A', 'archivist', 'Live');
+        fake.stateEngine.createPreset('x', 'i', { namespace: 'ar', name: 'Live', triggers: ['ai'] });
+        fake.stateEngine.createVariable('x', 'i', { namespace: 'ar', presetName: 'Live', name: 'memories', type: 'array', prompted: { instructions: 'my own wording' } });
+        fake.stateEngine.activatePreset('x', 'i', 'Chat A', 'ar', 'Live');
         getSettings().liveVariableVersion = LIVE_VARIABLE_VERSION;
 
         await ensureLivePreset();
 
-        expect(fake.presets.has('archivist.Live')).toBe(false);
-        expect(fake.presets.get(`archivist.${LIVE_PRESET}`).variables.get(VAR).prompted.instructions).toBe('my own wording');
+        expect(fake.presets.has('ar.Live')).toBe(false);
+        expect(fake.presets.get(`ar.${LIVE_PRESET}`).variables.get(VAR).prompted.instructions).toBe('my own wording');
         expect(fake.isActive('Chat A', LIVE_PRESET)).toBe(true);
         expect(fake.calls.filter((c) => c.name === 'createPreset')).toHaveLength(1);
     });
@@ -104,35 +104,35 @@ describe('self-repair', () => {
     });
 
     it('recreates a deleted Live preset and its variable when a chat opens, and re-activates it', async () => {
-        fake.presets.delete(`archivist.${LIVE_PRESET}`);
+        fake.presets.delete(`ar.${LIVE_PRESET}`);
         await syncLivePreset();
-        expect(fake.presets.get(`archivist.${LIVE_PRESET}`).variables.has(VAR)).toBe(true);
+        expect(fake.presets.get(`ar.${LIVE_PRESET}`).variables.has(VAR)).toBe(true);
         expect(fake.isActive('Chat A', LIVE_PRESET)).toBe(true);
     });
 
     it('recreates a deleted variable alone', async () => {
-        fake.presets.get(`archivist.${LIVE_PRESET}`).variables.delete(VAR);
+        fake.presets.get(`ar.${LIVE_PRESET}`).variables.delete(VAR);
         await syncLivePreset();
-        expect(fake.presets.get(`archivist.${LIVE_PRESET}`).variables.has(VAR)).toBe(true);
+        expect(fake.presets.get(`ar.${LIVE_PRESET}`).variables.has(VAR)).toBe(true);
     });
 
     it('re-activates a preset the user deactivated', async () => {
-        fake.stateEngine.deactivatePreset('x', 'i', 'Chat A', 'archivist', LIVE_PRESET);
+        fake.stateEngine.deactivatePreset('x', 'i', 'Chat A', 'ar', LIVE_PRESET);
         await repairLiveExtraction();
         expect(fake.isActive('Chat A', LIVE_PRESET)).toBe(true);
     });
 
     it('leaves the preset alone while Archivist is disabled', async () => {
         getSettings().enabled = false;
-        fake.presets.delete(`archivist.${LIVE_PRESET}`);
+        fake.presets.delete(`ar.${LIVE_PRESET}`);
         await syncLivePreset();
-        expect(fake.presets.has(`archivist.${LIVE_PRESET}`)).toBe(false);
+        expect(fake.presets.has(`ar.${LIVE_PRESET}`)).toBe(false);
     });
 
     it('keeps stored memory when the preset is deleted', async () => {
         fake.writeValue('Chat A', VAR, [{ text: 'safe' }]);
         await harvest('Chat A');
-        fake.presets.delete(`archivist.${LIVE_PRESET}`);
+        fake.presets.delete(`ar.${LIVE_PRESET}`);
         await syncLivePreset();
         expect((await getAllMemories()).map((r) => r.text)).toEqual(['safe']);
     });

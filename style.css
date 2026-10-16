@@ -447,6 +447,19 @@
 .ar-mb-polarity[data-sign="positive"] .ar-mb-polarity-fill { background: #4caf50; }
 .ar-mb-polarity[data-sign="negative"] .ar-mb-polarity-fill { background: #e05555; }
 
+.ar-mb-map-filter {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 6px;
+    font-size: 0.9em;
+}
+
+.ar-mb-map-filter select {
+    width: auto;
+    margin: 0;
+}
+
 .ar-mb-map-scroll {
     max-width: 100%;
     overflow-x: auto;
@@ -515,6 +528,11 @@
 .ar-mb-settled {
     opacity: 0.6;
 }
+
+/* Promises: kept green, broken red - a broken one stays at full strength. */
+.ar-mb-promise-kept { color: #4caf50; }
+.ar-mb-promise-broken { color: #e05555; }
+.ar-mb-broken { border-left-color: #e05555; }
 
 /* Editing the compiled memory (src/ui/compiled-edit.js). The buttons stay
    out of the way until the row is hovered. */
@@ -619,6 +637,16 @@
 .ar-mb-add {
     align-self: flex-start;
     margin: 2px 0 6px;
+}
+
+.ar-mb-tic-add {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.ar-mb-item-button.ar-mb-pinned {
+    color: var(--SmartThemeQuoteColor);
 }
 
 .ar-mb-rebuild-status {

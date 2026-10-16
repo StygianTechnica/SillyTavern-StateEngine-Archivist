@@ -12,7 +12,7 @@
 
 import { nameKey } from '../compiler/entity-link.js';
 import { SCENE_WINDOW } from '../compiler/compile-plan.js';
-import { activeTics } from '../compiler/phrase-tics.js';
+import { activeTics, MAX_SHOWN } from '../compiler/phrase-tics.js';
 import { currentStep } from '../compiler/compiled-schema.js';
 
 // The blocks, in the order a user would usually want them: [local variable
@@ -25,6 +25,7 @@ export const CONTEXT_BLOCKS = Object.freeze([
     ['ctx_threads', 'Open threads and quests', 'Threads and quests being pursued, and plot hooks and quest seeds involving a character in the scene.'],
     ['ctx_recent_events', 'Recent events', 'The latest events of the story, in order.'],
     ['ctx_secrets', 'Secrets (narrator only)', 'Secrets still kept, and who knows them - knowledge for the narrator, not the characters.'],
+    ['ctx_promises', 'Promises and vows', 'Promises, oaths and vows still standing, and the ones lately broken - who made them, and to whom.'],
     ['ctx_phrase_tics', 'Phrase tics to vary', 'Stock phrases the narration has been repeating lately, with a request to vary the wording for now.'],
 ]);
 
@@ -120,12 +121,18 @@ export function threadLine(t) {
     return `${line}\n  Plan: ${plan}`;
 }
 
-// The phrase tics in use, as a gentle request for variety - never a ban.
+// The phrase tics to avoid: the user's pinned ones (always), then the ones
+// in use, MAX_SHOWN in all - a request for variety, never a ban.
 // No apostrophes anywhere in it: phrases are written without theirs.
-export function phraseTicBlock(tics) {
-    const phrases = activeTics(tics).map((t) => t.phrase.replace(/['’‘`]/g, '').trim()).filter(Boolean);
+export function phraseTicBlock(tics, pinned = []) {
+    const pinnedKeys = new Set(pinned.map((p) => p.key));
+    const active = activeTics((tics ?? []).filter((t) => !pinnedKeys.has(t.key)));
+    const phrases = [...new Set([...pinned, ...active].map((t) => t.phrase.replace(/['’‘`]/g, '').trim()).filter(Boolean))].slice(0, MAX_SHOWN);
     if (!phrases.length) return '';
-    return block('Recent phrase tics detected. Please avoid the following phrases for now and vary your wording:', [
+    const head = pinned.length
+        ? 'Overused phrases. Please avoid the following phrases and vary your wording:'
+        : 'Recent phrase tics detected. Please avoid the following phrases for now and vary your wording:';
+    return block(head, [
         ...phrases.map((p) => `- ${p}`),
         'Use alternative gestures or emotional cues. Maintain character voice and scene logic.',
     ]);
@@ -136,9 +143,10 @@ export function phraseTicBlock(tics) {
 //   present   [{ id?, name, aliases? }] - the characters in the scene
 //   persona   { id?, name, aliases? } | null - the user's persona
 //   phraseTics  the chat's phrase tics (phrase-tic-tracker.js)
-export function buildPromptContext(view, { present = [], persona = null, phraseTics = [] } = {}) {
+//   pinnedTics  the phrases the user pinned ([{ phrase, key }])
+export function buildPromptContext(view, { present = [], persona = null, phraseTics = [], pinnedTics = [] } = {}) {
     const out = Object.fromEntries(CONTEXT_BLOCKS.map(([name]) => [name, '']));
-    out.ctx_phrase_tics = phraseTicBlock(phraseTics);
+    out.ctx_phrase_tics = phraseTicBlock(phraseTics, pinnedTics);
     if (!view) return out;
     const isPresent = matcher(present);
     const inPlay = matcher(persona ? [...present, persona] : present);
@@ -189,6 +197,19 @@ export function buildPromptContext(view, { present = [], persona = null, phraseT
         .slice(0, MAX_ITEMS)
         .map((w) => `- ${w.name}: ${w.text}${w.known_by?.length ? ` Known only by: ${names(w.known_by)}.` : ''}`);
     out.ctx_secrets = block('Secrets (narrator knowledge; characters know only what they know):', secretLines);
+
+    // Standing promises first; then broken ones, newest first - a broken
+    // vow has consequences the story should remember. Kept and released
+    // ones are done with.
+    const promises = view.world?.promise ?? [];
+    const promiseLines = [
+        ...promises.filter((w) => !w.status || w.status === 'pending'),
+        ...promises.filter((w) => w.status === 'broken').reverse(),
+    ].slice(0, MAX_ITEMS).map((w) => {
+        const parties = `${w.made_by?.length ? ` Made by ${names(w.made_by)}` : ''}${w.made_to?.length ? `${w.made_by?.length ? '' : ' Made'} to ${names(w.made_to)}` : ''}`;
+        return `- ${w.status === 'broken' ? '(BROKEN) ' : ''}${w.name}: ${w.text}${parties ? `${parties}.` : ''}`;
+    });
+    out.ctx_promises = block('Promises, oaths and vows:', promiseLines);
 
     return out;
 }

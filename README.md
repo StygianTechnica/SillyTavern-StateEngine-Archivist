@@ -13,7 +13,7 @@ Memory for SillyTavern chats, built on the
 - A compiler that turns memories into character profiles and insights (traits,
   habits, stressors, motivations, arcs), scene state, session details, relationships
   (type, polarity, intensity) with a relationship map, story threads and quests,
-  and the world (secrets and who knows them, locations, factions, items, world
+  and the world (secrets and who knows them, promises and vows kept or broken, locations, factions, items, world
   events, lore) and a timeline - deduplicated, colour-tagged, contradictions flagged,
   every item linked back to the chat messages it came from.
 - Links State Engine objects to what is known about them (`getEntityDossier`), for

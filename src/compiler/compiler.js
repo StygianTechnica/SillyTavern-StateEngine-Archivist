@@ -1,7 +1,7 @@
 // The Archivist Compiler: turns a chat's raw memories into structured,
 // deduplicated knowledge - character profiles and insights, scene state,
 // session details, relationships, story threads and quests, the world
-// (secrets, locations, factions, items, events, lore) and a timeline - with
+// (secrets, promises, locations, factions, items, events, lore) and a timeline - with
 // colour tags (src/compiler/compiled-schema.js).
 //
 // The model work runs through two of Archivist's own INDEPENDENT State
@@ -77,7 +77,8 @@ export const WORLD_VARIABLE = 'compiled_world';
 // 11: phrase tics found in code - the model's list removed.
 // 12: plan memories become plan threads.
 // 13: tension judged on a fixed scale at a batch's most tense moment.
-export const COMPILER_VARIABLE_VERSION = 13;
+// 14: promises, oaths and vows in the world.
+export const COMPILER_VARIABLE_VERSION = 14;
 
 // Variables an older version had, deleted when the version moves on:
 // [preset, variable].
@@ -177,12 +178,14 @@ const WORLD_INSTRUCTIONS = [
     'The COMPLETE updated list of what the memories establish about the world - keep the current entries, revised by the new memories, and add new ones. Record every place mentioned, and anything that appears more than once.',
     'Never drop an entry: when the new memories show it no longer holds, keep it and change its "status".',
     'Each item is an object: {"id": the id of the current entry it continues, or w<number> for a new one;',
-    '"kind": "secret" (something true that is hidden from some of the characters - not a suspicion or a theory, which are story threads), "location" (any place - a building, a room, a street, a city), "faction" (a group, team, business, organization, gang, staff or crowd), "item" (an object that matters or keeps appearing), "event" (an ongoing world event or condition - weather, shortages, holidays, emergencies, local happenings) or "lore" (how the world works - rules, customs, cultural norms, recurring patterns);',
+    '"kind": "secret" (something true that is hidden from some of the characters - not a suspicion or a theory, which are story threads), "promise" (a promise, oath, vow, pledge or deal someone made - marriage vows, a sworn oath, "I will come back for you"), "location" (any place - a building, a room, a street, a city), "faction" (a group, team, business, organization, gang, staff or crowd), "item" (an object that matters or keeps appearing), "event" (an ongoing world event or condition - weather, shortages, holidays, emergencies, local happenings) or "lore" (how the world works - rules, customs, cultural norms, recurring patterns);',
     '"name": its name, or a short label;',
     '"text": what is known about it;',
     '"known_by": for a secret, the names of the characters who know it ([] otherwise);',
+    '"made_by": for a promise, the names of who made it ([] otherwise);',
+    '"made_to": for a promise, the names of who it was made to ([] otherwise; both sides for a mutual vow);',
     '"involved": the names of the characters, places, factions and things connected to it;',
-    '"status": for a secret, "kept" (still hidden), "revealed" (the characters it was hidden from know it now) or "disproven" (it turned out not to be true); for an event, "ongoing" or "over"; "" otherwise;',
+    '"status": for a secret, "kept" (still hidden), "revealed" (the characters it was hidden from know it now) or "disproven" (it turned out not to be true); for a promise, "pending" (not yet fulfilled or broken), "kept" (fulfilled), "broken" (someone went back on it) or "released" (called off, or the one it was made to let it go); for an event, "ongoing" or "over"; "" otherwise;',
     '"sources": the refs [m...] of the NEW memories it uses ([] if none)}.',
 ].join(' ');
 
@@ -254,7 +257,7 @@ const PRESETS = [
     {
         name: WORLD_COMPILER_PRESET,
         header: WORLD_COMPILER_HEADER,
-        description: 'Archivist: compiles a chat\'s memories into story threads, quests, secrets, locations, factions, items, world events and lore. Run from the Archivist drawer.',
+        description: 'Archivist: compiles a chat\'s memories into story threads, quests, secrets, promises, locations, factions, items, world events and lore. Run from the Archivist drawer.',
         variables: [
             [THREADS_VARIABLE, () => variableDef(THREADS_INSTRUCTIONS, 'Compiled story threads', { text: { type: 'string' } })],
             [WORLD_VARIABLE, () => variableDef(WORLD_INSTRUCTIONS, 'Compiled world', { text: { type: 'string' } })],
@@ -455,6 +458,8 @@ async function resolveNames(answers, resolver) {
     for (const w of list(answers.world)) {
         add([w?.name]);
         add(w?.known_by);
+        add(w?.made_by);
+        add(w?.made_to);
         add(w?.involved ?? w?.entities);
     }
     const resolved = new Map();
@@ -576,6 +581,9 @@ async function compileRun(ref, { rebuild }) {
         compiled = mergeQualifiedNames(compiled);
         await writeCompiled(chatKey, compiled);
         if (chatKey === openKey()) openCache = { chatKey, compiled };
+        // Announced as it goes, so a long rebuild's tension graph and
+        // views fill in batch by batch (the last is announced on finishing).
+        if (b < batches.length - 1) emitCompiled(chatKey, ref.chatId);
     }
     // Phrase tics: the latest replies' repeated wording, once the story's
     // own names are known.

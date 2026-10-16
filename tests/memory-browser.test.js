@@ -7,6 +7,7 @@ import { getContext, characterChats, files } from './harness/st.js';
 import { resetFakeStateEngine } from './harness/state-engine.js';
 import { loadCurrentChat, addMemoryRecords } from '../src/memory/archivist.js';
 import { getCurrentChatRef, getChatEntry } from '../src/memory/registry.js';
+import { getSettings } from '../src/settings.js';
 import { groupChats, filterChoices, filterRecords, sourceLabel, shortDate } from '../src/ui/memory-browser-model.js';
 import { openMemoryBrowser, closeMemoryBrowser } from '../src/ui/memory-browser.js';
 
@@ -196,11 +197,11 @@ describe('the memory browser window', () => {
 
     it('shows the compiled view with colour tags and links that jump to the chat', async () => {
         fake.respond = async () => ({
-            archivist__compiled_facts: [
+            ar__compiled_facts: [
                 { text: 'Mira keeps secrets.', classification: 'PERMANENT', entities: ['Mira'], sources: ['m1'] },
                 { text: 'They are at the inn.', classification: 'SCENE', sources: ['m2'] },
             ],
-            archivist__compiled_relationships: [{ from: 'Mira', to: 'Kael', type: 'distrusts', text: 'Mira distrusts Kael.', sources: ['m1'] }],
+            ar__compiled_relationships: [{ from: 'Mira', to: 'Kael', type: 'distrusts', text: 'Mira distrusts Kael.', sources: ['m1'] }],
         });
         const { compileOpenChat } = await import('../src/compiler/compiler.js');
         await compileOpenChat();
@@ -227,11 +228,62 @@ describe('the memory browser window', () => {
         expect(texts()).toHaveLength(2);
     });
 
+    it('shows the relationship map for characters by default, and other kinds on request', async () => {
+        fake.addObject('chr_mira', 'character', 'Mira');
+        fake.addObject('loc_inn', 'location', 'The Old Inn');
+        fake.respond = async () => ({
+            ar__compiled_facts: [{ text: 'Mira keeps secrets.', classification: 'PERMANENT', entities: ['Mira'], sources: ['m1'] }],
+            ar__compiled_relationships: [
+                { from: 'Mira', to: 'Kael', type: 'distrusts', sources: ['m1'] },
+                { from: 'Mira', to: 'The Old Inn', type: 'owns', sources: ['m1'] },
+            ],
+        });
+        const { compileOpenChat } = await import('../src/compiler/compiler.js');
+        await compileOpenChat();
+        await openMemoryBrowser({ view: 'compiled' });
+        await waitFor(() => expect(q('.ar-mb-map')).not.toBeNull());
+        const heads = () => qa('.ar-mb-map tr:first-child th').slice(1).map((n) => n.textContent);
+        // Kael is linked to no object: a character for the map.
+        expect(heads()).toEqual(['Kael', 'Mira']);
+        const select = q('[data-mb="mapType"]');
+        expect([...select.options].map((o) => o.value)).toEqual(['character', 'location', '*']);
+
+        select.value = '*';
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+        expect(heads()).toEqual(['Kael', 'Mira', 'The Old Inn']);
+        // Redrawn: a new select.
+        q('[data-mb="mapType"]').value = 'location';
+        q('[data-mb="mapType"]').dispatchEvent(new Event('change', { bubbles: true }));
+        expect(q('.ar-mb-map')).toBeNull();
+        expect(q('.ar-mb-map-block .ar-mb-empty').textContent).toMatch(/at least two/);
+    });
+
+    it('tracks, pins and unpins a phrase from the phrase tics section', async () => {
+        const { getChatPhraseTics, getPinnedTics } = await import('../src/compiler/phrase-tic-tracker.js');
+        delete getSettings().phraseTicPinned;
+        fake.respond = async () => ({ ar__compiled_facts: [{ text: 'Mira keeps secrets.', entities: ['Mira'], sources: ['m1'] }] });
+        const { compileOpenChat } = await import('../src/compiler/compiler.js');
+        await compileOpenChat();
+        Object.assign(getContext(), { POPUP_TYPE: { CONFIRM: 2, INPUT: 3 } });
+        getContext().callGenericPopup = vi.fn(async () => 'his jaw tightened');
+        await openMemoryBrowser({ view: 'compiled' });
+        await waitFor(() => expect(q('[data-mb-tic-add="add"]')).not.toBeNull());
+
+        q('[data-mb-tic-add="add"]').click();
+        await waitFor(() => expect(getChatPhraseTics().map((t) => t.phrase)).toEqual(['his jaw tightened']));
+        await waitFor(() => expect(q('[data-mb-tic-action="pin"]')).not.toBeNull());
+        q('[data-mb-tic-action="pin"]').click();
+        expect(getPinnedTics().map((p) => p.phrase)).toEqual(['his jaw tightened']);
+        await waitFor(() => expect(q('[data-mb-tic-add="pin"]').textContent).toBe('Pin a phrase (1/8)'));
+        q('[data-mb-tic-action="unpin"]').click();
+        expect(getPinnedTics()).toEqual([]);
+    });
+
     it('graphs the story tension and lists a plan\'s steps', async () => {
         fake.respond = async () => ({
-            archivist__compiled_facts: [{ text: 'Mira keeps secrets.', classification: 'PERMANENT', entities: ['Mira'], sources: ['m1'] }],
-            archivist__compiled_tension: [{ threat: 4, uncertainty: 3, emotional: 2, reason: 'The key is missing.' }],
-            archivist__compiled_threads: [{
+            ar__compiled_facts: [{ text: 'Mira keeps secrets.', classification: 'PERMANENT', entities: ['Mira'], sources: ['m1'] }],
+            ar__compiled_tension: [{ threat: 4, uncertainty: 3, emotional: 2, reason: 'The key is missing.' }],
+            ar__compiled_threads: [{
                 kind: 'quest seed', title: 'Open the vault', text: 'x', status: 'active', goal: 'Get inside',
                 steps: [{ text: 'Find the key', status: 'done' }, { text: 'Bribe the guard', status: 'pending', note: 'he drinks' }],
             }],
@@ -251,8 +303,8 @@ describe('the memory browser window', () => {
 
     it('edits and deletes what the compiler wrote', async () => {
         fake.respond = async () => ({
-            archivist__compiled_facts: [{ text: 'Mira keeps secrets.', classification: 'PERMANENT', entities: ['Mira'], sources: ['m1'] }],
-            archivist__compiled_relationships: [{ from: 'Mira', to: 'Kael', type: 'distrusts', text: 'Mira distrusts Kael.', sources: ['m1'] }],
+            ar__compiled_facts: [{ text: 'Mira keeps secrets.', classification: 'PERMANENT', entities: ['Mira'], sources: ['m1'] }],
+            ar__compiled_relationships: [{ from: 'Mira', to: 'Kael', type: 'distrusts', text: 'Mira distrusts Kael.', sources: ['m1'] }],
         });
         const { compileOpenChat, getCompiledMemory } = await import('../src/compiler/compiler.js');
         await compileOpenChat();
@@ -275,7 +327,7 @@ describe('the memory browser window', () => {
     });
 
     it('lets the user write a story thread with its steps, kept through compiles and a rebuild', async () => {
-        fake.respond = async () => ({ archivist__compiled_facts: [{ text: 'Mira keeps secrets.', classification: 'PERMANENT', entities: ['Mira'], sources: ['m1'] }] });
+        fake.respond = async () => ({ ar__compiled_facts: [{ text: 'Mira keeps secrets.', classification: 'PERMANENT', entities: ['Mira'], sources: ['m1'] }] });
         const { compileOpenChat, getCompiledMemory } = await import('../src/compiler/compiler.js');
         await compileOpenChat();
         await openMemoryBrowser({ view: 'compiled' });
@@ -307,8 +359,8 @@ describe('the memory browser window', () => {
         fake.respond = async (context) => {
             if (context.includes('Story threads:')) expect(context).toContain(`[${thread.id}] quest · active · written by the author`);
             return {
-                archivist__compiled_facts: [{ text: 'Mira keeps secrets.', sources: ['m1'] }],
-                archivist__compiled_threads: [{ id: thread.id, title: 'Ravager trade', status: 'active', progress: 'They have the books.', steps: [{ text: 'Get the old books', status: 'done' }, { text: 'Niamh', status: 'active' }] }],
+                ar__compiled_facts: [{ text: 'Mira keeps secrets.', sources: ['m1'] }],
+                ar__compiled_threads: [{ id: thread.id, title: 'Ravager trade', status: 'active', progress: 'They have the books.', steps: [{ text: 'Get the old books', status: 'done' }, { text: 'Niamh', status: 'active' }] }],
             };
         };
         await compileOpenChat({ rebuild: true });
@@ -324,7 +376,7 @@ describe('the memory browser window', () => {
     });
 
     it('compiles when Compile now is clicked, and shows the result', async () => {
-        fake.respond = async () => ({ archivist__compiled_facts: [{ text: 'Mira keeps secrets.', classification: 'PERMANENT', entities: ['Mira'], sources: ['m1'] }] });
+        fake.respond = async () => ({ ar__compiled_facts: [{ text: 'Mira keeps secrets.', classification: 'PERMANENT', entities: ['Mira'], sources: ['m1'] }] });
         await openMemoryBrowser({ view: 'compiled' });
         await waitFor(() => expect(q('[data-mb="compileNow"]')).not.toBeNull());
         q('[data-mb="compileNow"] span').click();
