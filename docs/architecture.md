@@ -301,11 +301,35 @@ per chat
 (`archivist-compiled-...json`, next to the memories) - is updated by handing
 the model the current facts (`[f3] PERMANENT · employment · about Lucian:
 ...`) and relationships plus only the memories not `included` yet (`[m1]`,
-local refs), in batches of 20 (`COMPILE_BATCH`), and taking back the complete updated lists.
-`parseCompileOutput()` keeps a continued fact's id and earlier sources, maps
-refs back to memory ids, resolves entity names to State Engine object ids,
-and refuses an answer that would drop every fact (the previous state is
-kept). Rebuild starts from an empty state. The state is saved after every
+local refs), in batches of up to 20 (`COMPILE_BATCH`), and taking back only
+what changed. Facts come back as changes (`applyFactsDelta()`): a new fact
+(`"id": "new"`, given the next free id), a revised one by id, `"remove":
+true`, or `"merged_into"` another; every fact the answer does not name is
+kept, so ids stay stable and the answer does not grow with the store. The
+other lists come back as the items that are new or changed, the rest
+carried forward. `parseCompileOutput()` keeps a continued fact's id and
+earlier sources, maps refs back to memory ids, and resolves entity names to
+State Engine object ids. Rebuild starts from an empty state.
+
+**Fitting the context** (`src/compiler/budget.js`). Before each batch the
+prompt is estimated (characters / 3.5, plus the preset's header, State
+Engine's rules and the instructions) against the compiler's context
+(*Context* setting, else SillyTavern's Max context, else 8192), with room
+kept for the answer (*Max tokens*, at most half the context). When it does
+not fit, the batch shrinks (down to 5), and only the knowledge bearing on the
+batch is shown - facts, relationships and characters about its objects and
+names, SCENE facts, threads the author wrote - with the heading saying the
+rest is kept; at the smallest batches, as much of that as fits. Ids the
+model was not shown can't be revised or removed. If one memory with the
+summaries does not fit, the compile stops with an error rather than
+overflow.
+
+**Cut-off answers** (`src/compiler/salvage.js`). When the connection stops
+an answer at its token limit, State Engine can't read it and keeps its raw
+text (`lastResponse`); the compiler reads every complete item out of it -
+each list's finished items, each finished string - and applies those. The
+status counts the cut-off answers (`cutOff`), the drawer says so, and the
+batches after one go in halves. The state is saved after every
 batch. A run that fails stops there - never retried on its own; a toast
 says so and offers a retry on a click (`src/ui/compile-retry.js`), a plain
 compile that goes on from the last saved batch, even after a Rebuild.

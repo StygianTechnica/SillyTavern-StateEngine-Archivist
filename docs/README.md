@@ -183,8 +183,15 @@ It doesn't run on every message. In the drawer's **Compiler** section:
   after a while with some (**Or every**, default 30 minutes), but never right
   after the last compile (**Not within**, default 5 minutes). Only while
   Archivist is enabled.
-- **Connection** and **Max tokens** - its own model, like catch-up's. The
-  whole compiled list comes back each time, so give it room (default 3000).
+- **Connection** and **Max tokens** - its own model, like catch-up's. Only
+  what changed comes back, so answers stay short (default 3000; never more
+  than half the context).
+- **Context** - the compiler's model's context size in tokens (empty:
+  SillyTavern's Max context). Set it when the compiler's connection has a
+  different one - a local model loaded with 8192, say. Each compile is fitted
+  into it: smaller batches, and only the compiled knowledge bearing on the new
+  memories when all of it would not fit. An answer cut off at the token limit
+  still saves its complete items.
 - **Compile now** - compile the new memories now. **Rebuild** - start over
   from every memory.
 - **Also compile story threads, quests and the world** - on by default; it

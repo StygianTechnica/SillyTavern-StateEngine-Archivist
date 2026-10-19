@@ -49,14 +49,17 @@
 //
 // A compile run is two parts, each through its own preset (compiler.js):
 // the MEMORY part (facts, relationships, characters) and the WORLD part
-// (threads, world). Each hands the model its current lists plus a batch of
-// new memories (each as [m<n>]) and gets back the complete, updated lists;
-// the parse* functions turn that answer into the next state, keeping each
-// continued item's earlier sources. An item the answer leaves out is KEPT
-// (carriedForward()): models drop items from a long list without meaning
-// to - a relationship, a secret, a quest seed - so only facts are ever
-// dropped by the model ("no longer true"), and not more than half of them
-// at once (ELIDED_FACTS_MIN). The user removes the rest. buildCompiledView() turns a state into
+// (threads, world). Each hands the model its current lists (all of them, or
+// only what bears on the batch when they would not fit the model's context -
+// budget.js) plus a batch of new memories (each as [m<n>]) and gets back
+// only what CHANGED: new and revised items, and for facts the ids to remove
+// (applyFactsDelta()). The parse* functions turn that answer into the next
+// state, keeping each continued item's earlier sources. An item the answer
+// leaves out is KEPT (carriedForward()) - so an answer cut short, or a
+// context that did not show an item, loses nothing. Only facts are ever
+// dropped by the model ("no longer true"), by naming them, and not more
+// than half of them at once (ELIDED_FACTS_MIN). The user removes the rest.
+// buildCompiledView() turns a state into
 // what the API returns, colour-tagged, every item linked back to the chat
 // messages it rests on (through its source memories, whose message indexes
 // message-sync keeps current).
@@ -190,14 +193,42 @@ function newMemoryLines(batch, nameOf) {
     return ['', 'New memories:', ...batch.map((record, i) => memoryLine(record, refs[i], nameOf))];
 }
 
-function relationshipLine(r) {
+// Each compiled item as the model reads it (one line, or a thread's lines
+// joined) - also what budget.js measures.
+export function factLine(fact) {
+    const about = entityList(fact.entities);
+    return `[${fact.id}] ${fact.classification} · ${fact.theme || 'general'}${about ? ` · about ${about}` : ''}: ${fact.text}`;
+}
+
+export function relationshipLine(r) {
     const polarity = normalizePolarity(r.polarity);
     const details = [r.type, `${polarityLabel(polarity)} (${polarity > 0 ? '+' : ''}${polarity})`, `${r.intensity ?? 'medium'} intensity`];
     if (r.trend) details.push(r.trend);
     return `- ${r.from.name} -> ${r.to.name}: ${details.join(' · ')}: ${r.text}`;
 }
 
-function characterLine(c) {
+export function threadLines(t) {
+    const involved = entityList(t.involved);
+    const author = t.added_by === 'user' ? ' · written by the author' : '';
+    const lines = [`[${t.id}] ${t.kind} · ${t.status}${author}${involved ? ` · involves ${involved}` : ''}: ${t.title} - ${t.text}${t.progress ? ` (progress: ${t.progress})` : ''}`];
+    if (t.goal) lines.push(`    goal: ${t.goal}`);
+    (t.steps ?? []).forEach((s, i) => lines.push(`    ${i + 1}. [${s.status}] ${s.text}${s.note ? ` (${s.note})` : ''}`));
+    return lines.join('\n');
+}
+
+export function worldLine(w) {
+    const knownBy = entityList(w.known_by);
+    const madeBy = entityList(w.made_by);
+    const madeTo = entityList(w.made_to);
+    const promise = w.kind === 'promise' ? `${madeBy ? ` · made by ${madeBy}` : ''}${madeTo ? ` · made to ${madeTo}` : ''}` : '';
+    return `[${w.id}] ${w.kind} · ${w.name}${knownBy ? ` · known by ${knownBy}` : ''}${promise}${w.status ? ` · ${w.status}` : ''}: ${w.text}`;
+}
+
+// The heading of a list in the context; when `partial`, saying that only
+// some of it is shown - the rest is kept as it is.
+const listHeading = (label, partial) => (partial ? `${label} (only those bearing on the new memories are shown - the others are kept as they are):` : `${label}:`);
+
+export function characterLine(c) {
     const parts = [];
     if (c.summary) parts.push(`now: ${c.summary}`);
     for (const field of ['traits', 'habits', 'stressors', 'motivations']) if (c[field]?.length) parts.push(`${field}: ${c[field].join(', ')}`);
@@ -211,24 +242,24 @@ function characterLine(c) {
 // name for an entity id (or null).
 // `extraLines`: more to read before the new memories (the repeated phrases
 // of the latest replies, for the phrase tics).
-export function compileContext(previous, batch, nameOf = () => null, extraLines = []) {
+// `partial`: { facts, relationships, characters } - which lists `previous`
+// holds only part of (budget.js), each said so in its heading.
+export function compileContext(previous, batch, nameOf = () => null, extraLines = [], partial = {}) {
+    const none = (shown, part) => (shown ? [] : [part ? '(none bearing on the new memories)' : '(none yet)']);
     const lines = [
         'Current compiled knowledge:',
         `Story so far: ${previous.summary?.story || '(none yet)'}`,
         `Current scene: ${previous.summary?.scene || '(none yet)'}`,
-        'Facts:',
+        listHeading('Facts', partial.facts),
+        ...none(previous.facts.length, partial.facts),
+        ...previous.facts.map(factLine),
+        listHeading('Relationships', partial.relationships),
+        ...none(previous.relationships.length, partial.relationships),
+        ...previous.relationships.map(relationshipLine),
+        listHeading('Characters', partial.characters),
+        ...none(previous.characters?.length, partial.characters),
+        ...(previous.characters ?? []).map(characterLine),
     ];
-    if (previous.facts.length === 0) lines.push('(none yet)');
-    for (const fact of previous.facts) {
-        const about = entityList(fact.entities);
-        lines.push(`[${fact.id}] ${fact.classification} · ${fact.theme || 'general'}${about ? ` · about ${about}` : ''}: ${fact.text}`);
-    }
-    lines.push('Relationships:');
-    if (previous.relationships.length === 0) lines.push('(none yet)');
-    for (const r of previous.relationships) lines.push(relationshipLine(r));
-    lines.push('Characters:');
-    if (!previous.characters?.length) lines.push('(none yet)');
-    for (const c of previous.characters ?? []) lines.push(characterLine(c));
     lines.push(...dismissedLines(previous, ['fact', 'relationship', 'character']));
     lines.push(...extraLines);
     lines.push(...newMemoryLines(batch, nameOf));
@@ -242,26 +273,18 @@ function dismissedLines(previous, kinds) {
 }
 
 // What the WORLD part's model reads: the current threads and world entries,
-// then the new memories.
-export function worldContext(previous, batch, nameOf = () => null) {
-    const lines = ['Current compiled knowledge:', 'Story threads:'];
-    if (!previous.threads?.length) lines.push('(none yet)');
-    for (const t of previous.threads ?? []) {
-        const involved = entityList(t.involved);
-        const author = t.added_by === 'user' ? ' · written by the author' : '';
-        lines.push(`[${t.id}] ${t.kind} · ${t.status}${author}${involved ? ` · involves ${involved}` : ''}: ${t.title} - ${t.text}${t.progress ? ` (progress: ${t.progress})` : ''}`);
-        if (t.goal) lines.push(`    goal: ${t.goal}`);
-        (t.steps ?? []).forEach((s, i) => lines.push(`    ${i + 1}. [${s.status}] ${s.text}${s.note ? ` (${s.note})` : ''}`));
-    }
-    lines.push('World:');
-    if (!previous.world?.length) lines.push('(none yet)');
-    for (const w of previous.world ?? []) {
-        const knownBy = entityList(w.known_by);
-        const madeBy = entityList(w.made_by);
-        const madeTo = entityList(w.made_to);
-        const promise = w.kind === 'promise' ? `${madeBy ? ` · made by ${madeBy}` : ''}${madeTo ? ` · made to ${madeTo}` : ''}` : '';
-        lines.push(`[${w.id}] ${w.kind} · ${w.name}${knownBy ? ` · known by ${knownBy}` : ''}${promise}${w.status ? ` · ${w.status}` : ''}: ${w.text}`);
-    }
+// then the new memories. `partial`: { threads, world }, as compileContext()'s.
+export function worldContext(previous, batch, nameOf = () => null, partial = {}) {
+    const none = (shown, part) => (shown ? [] : [part ? '(none bearing on the new memories)' : '(none yet)']);
+    const lines = [
+        'Current compiled knowledge:',
+        listHeading('Story threads', partial.threads),
+        ...none(previous.threads?.length, partial.threads),
+        ...(previous.threads ?? []).map(threadLines),
+        listHeading('World', partial.world),
+        ...none(previous.world?.length, partial.world),
+        ...(previous.world ?? []).map(worldLine),
+    ];
     lines.push(...dismissedLines(previous, ['thread', 'world']));
     lines.push(...newMemoryLines(batch, nameOf));
     return lines.join('\n');
@@ -299,46 +322,107 @@ function idAssigner(prefix, previousItems) {
     };
 }
 
-// The next facts and relationships from the model's answer, or null when
-// the answer can't be trusted (it would drop every fact while there were
-// some).
+// The next facts and relationships from the model's answer.
 //   rawFacts, rawRelationships  the two variables' values
 //   previous                    the compiled state the run started from
 //   refs                        refsFor() of the batch
 //   recordsById                 Map id -> memory record (for fallbacks)
 //   resolve(name)               -> entity for a name
-// A facts answer that keeps fewer than half of at least this many current
-// facts is taken as shortened ("f1, f2, ..., f40" - small models elide long
-// lists), not as that many facts no longer holding: the ones it left out
-// are kept.
+//   shownFactIds                the ids of the facts the model was shown (a
+//                               Set; omitted: all of them) - see
+//                               applyFactsDelta()
+export function parseCompileOutput(rawFacts, rawRelationships, { previous, refs, recordsById, resolve, shownFactIds = null }) {
+    return {
+        facts: applyFactsDelta(rawFacts, { previous, refs, recordsById, resolve, shownFactIds }),
+        relationships: parseRelationships(rawRelationships, { previous, refs, resolve }),
+    };
+}
+
+// An answer that removes more than half of at least this many current facts
+// at once is not trusted with its removals (a small model "cleaning up"
+// everything): the facts stay, its other changes are applied.
 export const ELIDED_FACTS_MIN = 6;
 
-export function parseCompileOutput(rawFacts, rawRelationships, { previous, refs, recordsById, resolve }) {
-    const previousById = new Map(previous.facts.map((f) => [f.id, f]));
+// "f3", "[f3]", " F3 " -> "f3"; anything else -> ''.
+const factIdOf = (value) => {
+    const id = String(value ?? '').trim().replace(/^\[|\]$/g, '').toLowerCase();
+    return /^f\d+$/.test(id) ? id : '';
+};
+const REMOVE_OPS = new Set(['remove', 'removed', 'delete', 'deleted', 'drop', 'dropped', 'merge', 'merged']);
+
+// The facts after the model's answer: a list of CHANGES (FACTS_INSTRUCTIONS
+// in compiler.js), never the whole list, so a long store does not have to
+// be written out again each run - and an answer cut short loses nothing:
+//   { "id": "new" (or none), "text", ... }   a new fact, given the next free
+//                                            id - ids are never reused
+//   { "id": "f3", "text", ... }              f3 revised: the fields given
+//                                            replace its own, its sources grow
+//   { "id": "f3", "remove": true }           f3 removed (also "op": "remove")
+//   { "id": "f3", "merged_into": "f7" }      f3 removed, its sources go to f7
+// Every fact the answer does not name stays as it is, in its place. An id
+// the model was not shown (`shownFactIds`) or that does not exist is
+// unknown: a removal of it is ignored, a revision of it is taken as a new
+// fact - unless its text is a current fact's, which it then revises.
+export function applyFactsDelta(rawFacts, { previous, refs, recordsById, resolve, shownFactIds = null }) {
+    const facts = previous.facts.map((f) => ({ ...f }));
+    const byId = new Map(facts.map((f) => [f.id, f]));
+    const byText = new Map(facts.map((f) => [looseKey(f.text), f]));
+    const known = (id) => byId.has(id) && (!shownFactIds || shownFactIds.has(id));
     const nextId = idAssigner('f', previous.facts);
     const dismissed = dismissedTest(previous.dismissed);
-    let facts = [];
+    const removals = new Map(); // id -> the id it was merged into, or null
+    const revised = new Set();
     for (const raw of Array.isArray(rawFacts) ? rawFacts : []) {
-        if (!raw || typeof raw !== 'object' || !isText(raw.text) || isPlaceholder(raw.text) || dismissed('fact', raw)) continue;
-        const id = nextId(raw);
-        const sources = [...new Set([...(previousById.get(id)?.sources ?? []), ...sourceIdsOf(raw.sources, refs)])];
-        facts.push({
-            id,
+        if (!raw || typeof raw !== 'object') continue;
+        const into = factIdOf(raw.merged_into ?? raw.merge_into ?? raw.mergedInto);
+        const id = factIdOf(typeof raw.remove === 'string' ? raw.remove : raw.id);
+        const removing = into || typeof raw.remove === 'string' || raw.remove === true || raw.removed === true || raw.delete === true
+            || REMOVE_OPS.has(String(raw.op ?? raw.action ?? '').trim().toLowerCase());
+        if (removing) {
+            if (known(id)) removals.set(id, into && into !== id && known(into) ? into : null);
+            continue;
+        }
+        if (!isText(raw.text) || isPlaceholder(raw.text) || dismissed('fact', raw)) continue;
+        // An id given twice: the second is a fact of its own.
+        const current = (known(id) && !revised.has(id) ? byId.get(id) : null) ?? byText.get(looseKey(raw.text));
+        const added = sourceIdsOf(raw.sources, refs);
+        if (current) {
+            revised.add(current.id);
+            current.text = raw.text.trim();
+            current.sources = [...new Set([...current.sources, ...added])];
+            if (isText(raw.classification)) current.classification = normalizeClassification(raw.classification, current.classification);
+            if (isText(raw.theme)) current.theme = raw.theme.trim().toLowerCase();
+            if (names(raw.entities).length) current.entities = names(raw.entities).map(resolve);
+            if (raw.contradicts !== undefined) current.contradicts = names(raw.contradicts).map(factIdOf).filter(Boolean);
+            byText.set(looseKey(current.text), current);
+            continue;
+        }
+        const fact = {
+            id: nextId({}),
             text: raw.text.trim(),
-            classification: normalizeClassification(raw.classification, classificationFromSources(sources, recordsById)),
+            classification: normalizeClassification(raw.classification, classificationFromSources(added, recordsById)),
             theme: isText(raw.theme) ? raw.theme.trim().toLowerCase() : 'general',
             entities: names(raw.entities).map(resolve),
-            sources,
-            contradicts: names(raw.contradicts),
-        });
+            sources: [...new Set(added)],
+            contradicts: names(raw.contradicts).map(factIdOf).filter(Boolean),
+        };
+        facts.push(fact);
+        byId.set(fact.id, fact);
+        byText.set(looseKey(fact.text), fact);
     }
-    if (previous.facts.length > 0 && facts.length === 0) return null;
-    const kept = facts.filter((f) => previousById.has(f.id)).length;
-    if (previous.facts.length >= ELIDED_FACTS_MIN && kept < previous.facts.length / 2) facts = carriedForward(facts, previous.facts, (f) => f.id);
-    const ids = new Set(facts.map((f) => f.id));
-    for (const fact of facts) fact.contradicts = fact.contradicts.filter((other) => other !== fact.id && ids.has(other));
-
-    return { facts, relationships: parseRelationships(rawRelationships, { previous, refs, resolve }) };
+    const plain = [...removals.values()].filter((into) => into === null).length;
+    if (previous.facts.length >= ELIDED_FACTS_MIN && plain > previous.facts.length / 2) {
+        for (const [id, into] of [...removals]) if (into === null) removals.delete(id);
+    }
+    for (const [id, into] of removals) {
+        // Merged into a fact that is itself removed: its sources go nowhere.
+        const target = into && !removals.has(into) ? byId.get(into) : null;
+        if (target) target.sources = [...new Set([...target.sources, ...byId.get(id).sources])];
+    }
+    const next = facts.filter((f) => !removals.has(f.id));
+    const ids = new Set(next.map((f) => f.id));
+    for (const fact of next) fact.contradicts = (fact.contradicts ?? []).filter((other) => other !== fact.id && ids.has(other));
+    return next;
 }
 
 // One relationship per direction of a pair: from -> to.

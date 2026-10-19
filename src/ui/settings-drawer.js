@@ -200,6 +200,15 @@ function wireCompiler() {
     bindNumber('ar_compile_interval', 'compileIntervalMinutes', 1, 1440);
     bindNumber('ar_compile_gap', 'compileMinGapMinutes', 0, 1440);
     bindNumber('ar_compiler_tokens', 'compilerMaxTokens', 500, 32000);
+    // 0 (or empty): SillyTavern's own Max context.
+    const contextInput = byId('ar_compiler_context');
+    contextInput.value = getSettings().compilerContextTokens ? String(getSettings().compilerContextTokens) : '';
+    contextInput.addEventListener('change', () => {
+        const typed = Math.round(Number(contextInput.value));
+        getSettings().compilerContextTokens = Number.isFinite(typed) && typed > 0 ? Math.min(2097152, Math.max(1024, typed)) : 0;
+        contextInput.value = getSettings().compilerContextTokens ? String(getSettings().compilerContextTokens) : '';
+        saveSettings();
+    });
     bindNumber('ar_compiler_temperature', 'compilerTemperature', 0, 2, 2);
     fillConnections('ar_compiler_connection', 'compilerConnectionProfileId');
     const select = byId('ar_compiler_connection');

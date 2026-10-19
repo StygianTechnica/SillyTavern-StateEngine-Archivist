@@ -209,14 +209,17 @@ describe('planning and parsing', () => {
         ]);
     });
 
-    it('keeps the facts a shortened answer left out ("f1, f2, ..., f40"), but lets a few go', () => {
+    it('keeps every fact an answer leaves out, and does not trust it to remove most of them at once', () => {
         const many = { ...previous, facts: Array.from({ length: 8 }, (_, i) => ({ ...previous.facts[0], id: `f${i + 1}`, text: `Fact ${i + 1}.` })) };
-        const elided = parseCompileOutput([{ id: 'f1', text: 'Fact 1.' }, { id: 'f2', text: 'Fact 2.' }, { id: 'f9', text: 'New.' }], [], { ...options, previous: many });
-        expect(elided.facts.map((f) => f.id)).toEqual(['f1', 'f2', 'f9', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8']);
-        const fewGone = parseCompileOutput(many.facts.slice(0, 5).map((f) => ({ id: f.id, text: f.text })), [], { ...options, previous: many });
+        // An answer of changes (or an old-style list cut short) leaves the rest as they are.
+        const short = parseCompileOutput([{ id: 'f1', text: 'Fact 1.' }, { id: 'f2', text: 'Fact 2.' }, { id: 'new', text: 'New.' }], [], { ...options, previous: many });
+        expect(short.facts.map((f) => f.id)).toEqual(['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8', 'f9']);
+        const fewGone = parseCompileOutput(['f6', 'f7', 'f8'].map((id) => ({ id, remove: true })), [], { ...options, previous: many });
         expect(fewGone.facts.map((f) => f.id)).toEqual(['f1', 'f2', 'f3', 'f4', 'f5']);
+        const mostGone = parseCompileOutput(['f1', 'f2', 'f3', 'f4', 'f5'].map((id) => ({ id, remove: true })), [], { ...options, previous: many });
+        expect(mostGone.facts).toHaveLength(8);
         // A short list is the model's to change.
-        expect(parseCompileOutput([{ id: 'f9', text: 'New.' }], [], options).facts.map((f) => f.id)).toEqual(['f9']);
+        expect(parseCompileOutput([{ id: 'f1', remove: true }, { id: 'new', text: 'New.' }], [], options).facts.map((f) => [f.id, f.text])).toEqual([['f2', 'New.']]);
     });
 
     it('takes a relationship type without the context line the model copied into it', () => {
@@ -427,7 +430,9 @@ describe('planning and parsing', () => {
             { from: 'Lucian', type: 'missing to' },
         ], { previous, refs: refsFor(batch), recordsById: new Map(batch.map((r) => [r.id, r])), resolve });
 
-        expect(next.facts.map((f) => f.id)).toEqual(['f1', 'f9', 'f10', 'f11']);
+        // New facts take the next free ids, whatever the model numbered them.
+        expect(next.facts.map((f) => f.id)).toEqual(['f1', 'f2', 'f3', 'f4']);
+        expect(next.facts.map((f) => f.text)).toEqual(['Lucian works at the gym and picks up extra shifts.', 'It is raining.', 'no id given', 'a repeated id gets a new one']);
         expect(next.facts[0]).toMatchObject({ theme: 'employment', sources: ['m_old', 'm_a'], entities: [{ id: 'chr_lucian', name: 'Lucian', type: 'character' }] });
         expect(next.facts[1]).toMatchObject({ classification: 'SCENE', sources: ['m_b'] });
         expect(next.relationships).toHaveLength(1);
@@ -447,8 +452,8 @@ describe('planning and parsing', () => {
         expect(next.facts[0].contradicts).toEqual(['f2']);
     });
 
-    it('refuses an answer that would drop every fact', () => {
-        expect(parseCompileOutput([], [], { previous, refs: new Map(), recordsById: new Map(), resolve })).toBeNull();
+    it('takes an empty answer as no change', () => {
+        expect(parseCompileOutput([], [], { previous, refs: new Map(), recordsById: new Map(), resolve })).toEqual({ facts: previous.facts, relationships: previous.relationships });
         expect(parseCompileOutput([], [], { previous: EMPTY_COMPILED, refs: new Map(), recordsById: new Map(), resolve })).toEqual({ facts: [], relationships: [] });
     });
 
@@ -885,14 +890,17 @@ describe('compiling through the independent preset', () => {
         expect((await getCompiledMemory()).pending).toBe(0);
     });
 
-    it('keeps the previous compiled memory when a run fails or drops every fact', async () => {
+    it('keeps the previous compiled memory when a run fails or answers no facts', async () => {
         await store([{ text: 'one', source_message_id: 'Chat A#1@d1' }]);
         await compileOpenChat();
         await store([{ text: 'two', source_message_id: 'Chat A#1@d1' }]);
 
+        // No facts in the answer: nothing about them changed.
         fake.respond = async () => ({ ar__compiled_facts: [], ar__compiled_relationships: [] });
         await compileOpenChat();
-        expect(getCompilerStatus()).toMatchObject({ outcome: 'failed', error: expect.stringContaining('dropped every fact') });
+        expect(getCompilerStatus()).toMatchObject({ outcome: 'compiled' });
+        expect((await getCompiledMemory()).session_details.map((f) => f.text)).toEqual(['compiled m1']);
+        await store([{ text: 'three', source_message_id: 'Chat A#1@d1' }]);
 
         fake.respond = async () => { throw new Error('model down'); };
         const before = memoryRuns().length;

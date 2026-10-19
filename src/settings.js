@@ -39,10 +39,13 @@ const DEFAULTS = {
     compileIntervalMinutes: 30,
     // ...but never sooner than this after the last one.
     compileMinGapMinutes: 5,
-    // The compiler's connection ('' = State Engine's) and answer size: the
-    // whole compiled list comes back each run.
+    // The compiler's connection ('' = State Engine's) and answer size (only
+    // what changed comes back; never more than half the context).
     compilerConnectionProfileId: '',
     compilerMaxTokens: 3000,
+    // The compiler's model's context in tokens: prompts are fitted to it
+    // (src/compiler/budget.js). 0 = SillyTavern's Max context.
+    compilerContextTokens: 0,
     // The compiler's temperature: low, so a small model keeps to the JSON
     // it is asked for (at 1 it slips - brackets, quotes, elided lists).
     compilerTemperature: 0.3,

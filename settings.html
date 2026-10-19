@@ -110,9 +110,13 @@
                         <span>Connection</span>
                         <select id="ar_compiler_connection" class="text_pole"></select>
                     </label>
-                    <label class="ar-field" title="The longest answer a compile may give - the whole compiled list comes back each time.">
+                    <label class="ar-field" title="The longest answer a compile may give. Answers are only what changed, so they stay short; never more than half the context is kept for one.">
                         <span>Max tokens</span>
                         <input id="ar_compiler_tokens" type="number" class="text_pole" min="500" max="32000" step="100" />
+                    </label>
+                    <label class="ar-field" title="The compiler's model's context size in tokens - its prompt and answer together must fit. Empty: SillyTavern's Max context. Set it when the compiler's connection has a different context (a local model loaded with 8192, say).">
+                        <span>Context</span>
+                        <input id="ar_compiler_context" type="number" class="text_pole" min="0" max="2097152" step="512" placeholder="auto" />
                     </label>
                     <label class="ar-field" title="How freely the compiler's model writes. Keep it low (0.2-0.4): a compile is bookkeeping, and higher values make small models break the JSON it has to answer in.">
                         <span>Temperature</span>

@@ -19,14 +19,18 @@
 // (settings.compileWorld).
 //
 // INCREMENTAL: each run hands the model the current compiled knowledge and
-// only the memories added since, in batches of COMPILE_BATCH, and gets back
-// the complete updated lists - profiles stay stable, prompts stay small.
+// only the memories added since, in batches of up to COMPILE_BATCH, and gets
+// back only what changed (new and revised items, facts to remove) - so the
+// answer stays small however large the store grows. The prompt is kept
+// inside the model's context (budget.js): smaller batches, and only the
+// knowledge bearing on the batch when all of it would not fit. An answer the
+// connection cut off keeps its complete items (salvage.js).
 // Rebuild starts from nothing and feeds every memory, batch by batch.
 //
 // Stored per chat in its own file next to the memories
 // (registry compiledFileFor()); the registry entry's `compiler` field
-// records { at, memoryCount }. An answer that would drop every fact is not
-// trusted - the previous compiled state is kept.
+// records { at, memoryCount }. A fact is only ever dropped when the answer
+// names it - never for being left out.
 
 import { LOG_PREFIX } from '../constants.js';
 import { getSettings, saveSettings } from '../settings.js';
@@ -48,6 +52,8 @@ import {
 } from './compile-plan.js';
 import { meaningfulCount, shouldCompile } from './schedule.js';
 import { TENSION_MAX } from './compiled-schema.js';
+import { salvageAnswer, salvageJsonObject } from './salvage.js';
+import { contextTokens, answerTokens, presetOverheadChars, contextBudgetChars, planBatch, MEMORY_LISTS, WORLD_LISTS, estimateTokens } from './budget.js';
 
 export const COMPILER_PRESET = 'Archivist Memory Compiler';
 export const WORLD_COMPILER_PRESET = 'Archivist World Compiler';
@@ -80,7 +86,9 @@ export const WORLD_VARIABLE = 'compiled_world';
 // 14: promises, oaths and vows in the world.
 // 15: a plan memory goes on the thread with its goal, never on one about
 // something else.
-export const COMPILER_VARIABLE_VERSION = 15;
+// 16: answers are changes, not complete lists - facts as new / revised /
+// removed, the other lists as the items that are new or changed.
+export const COMPILER_VARIABLE_VERSION = 16;
 
 // Variables an older version had, deleted when the version moves on:
 // [preset, variable].
@@ -108,6 +116,7 @@ export const COMPILER_HEADER = [
     ...SILENT,
     'You will be given the current compiled knowledge about a story - the story so far, the current scene, facts (each with an id like [f3]), relationships and character insights - and new memories extracted from the story (each with a ref like [m1], with the message number it comes from).',
     'Update the compiled knowledge with the new memories: evaluate each variable according to its conditions and return the required JSON output.',
+    'Answer only what the new memories change - everything you leave out is kept as it is.',
     '',
 ].join('\n');
 
@@ -115,26 +124,30 @@ export const WORLD_COMPILER_HEADER = [
     ...SILENT,
     'You will be given the current compiled knowledge about a story\'s world - story threads (each with an id like [t2]) and world entries (each with an id like [w5]) - and new memories extracted from the story (each with a ref like [m1]).',
     'Update the compiled knowledge with the new memories: evaluate each variable according to its conditions and return the required JSON output.',
+    'Answer only what the new memories change - everything you leave out is kept as it is.',
     '',
 ].join('\n');
 
 const FACTS_INSTRUCTIONS = [
-    'The COMPLETE updated list of compiled facts: every current fact - revised where the new memories change it - plus new facts from the new memories.',
-    'Merge memories and facts that say the same thing about the same entity (the same core nouns, place, job or relationship) into ONE fact.',
+    'Only the CHANGES to the compiled facts - never repeat a current fact the new memories do not change: every fact you leave out is kept as it is.',
+    'Each item is one change: a NEW fact from the new memories, with "id": "new";',
+    'a REVISED fact - a current fact the new memories change or add to - with "id" the id of the current fact, and all its fields as they should now be;',
+    'a fact to REMOVE, when the new memories show it is no longer true: {"id": its id, "remove": true};',
+    'a current fact that says the same as another: {"id": its id, "merged_into": the id of the fact it is merged into} (revise that one if it needs to say more).',
+    'Never add a new fact that says the same thing about the same entity (the same core nouns, place, job or relationship) as a current fact or another new one - revise that fact, or make them ONE new fact.',
     'Consolidate into canonical statements, for example: several memories about the same workplace become one fact "X works at Y"; mentions of money trouble or extra jobs become "X is under financial strain and considering additional work"; arrivals, weather and transport are facts about the scene.',
-    'Drop a current fact only when the new memories show it is no longer true.',
-    'A SCENE fact holds only while its scene lasts: once the newest memories show the story has moved on (another place, a later time, the people gone), drop it - or, if it still matters, keep it as a SESSION or PERMANENT fact.',
-    'Each item is an object: {"id": the id of the current fact it continues, or a new id f<number> for a new fact;',
+    'A SCENE fact holds only while its scene lasts: once the newest memories show the story has moved on (another place, a later time, the people gone), remove it - or, if it still matters, revise it into a SESSION or PERMANENT fact.',
+    'A new or revised fact is an object: {"id": "new", or the id of the current fact it revises;',
     '"text": one self-contained statement naming who or what it is about;',
     '"entities": the names of the characters, places, factions and things it is about, exactly as the story names them;',
     '"classification": "PERMANENT" (stable biography or long-term condition), "SESSION" (true for this part of the story) or "SCENE" (only the immediate scene: arrivals, weather, transport, what is happening right now);',
     '"theme": one short word - employment, finances, transportation, relationships, activity, health, location, or another;',
     '"sources": the refs [m...] of the NEW memories it uses ([] if none);',
-    '"contradicts": the ids of other facts in your list it is incompatible with ([] if none)}.',
+    '"contradicts": the ids of other facts it is incompatible with ([] if none)}.',
 ].join(' ');
 
 const RELATIONSHIPS_INSTRUCTIONS = [
-    'The COMPLETE updated list of relationships, one item for each direction of a pair (how A sees B, and how B sees A, can differ) - keep the current ones that still hold, revise them as the new memories change them, add new ones.',
+    'Only the relationships that are new or that the new memories change, one item for each direction of a pair (how A sees B, and how B sees A, can differ) - every current relationship you leave out is kept as it is.',
     'Each item is an object: {"from": a name; "to": a name - each the name only, exactly as the story names them and as the current relationships write it, never with a description in brackets ("Remus Watt", not "Remus Watt (romantic partner)");',
     '"type": what the relationship is, in your own words - friend, enemy, mentor, student, colleague, boss, client, rival, crush, partner, family, acquaintance, stranger, or whatever fits best;',
     '"polarity": how "from" feels toward "to", a whole number from -3 to 3: -3 hostile, -2 antagonistic, -1 wary, 0 neutral, 1 friendly, 2 close, 3 devoted -',
@@ -145,7 +158,7 @@ const RELATIONSHIPS_INSTRUCTIONS = [
 ].join(' ');
 
 const CHARACTERS_INSTRUCTIONS = [
-    'The COMPLETE updated list of character insights - one item per character the memories show enough of, inferred from what they do, say, choose and go through; keep the current ones, revised and added to by the new memories.',
+    'Only the characters the new memories show something new about - one item each, with their whole insights revised and added to, inferred from what they do, say, choose and go through; every current character you leave out is kept as they are.',
     'Each item is an object: {"name": the character\'s name as the story names them and the current insights write it - the name only, never with a description in brackets;',
     '"summary": who they are NOW, in 2 to 4 sentences - what is known about them as of the newest memories, judged by what they have done and how they have behaved: their situation, what they are caught up in, how they treat others and what others have learned about them. Rewrite it as the story moves on: a portrait of the present, not a history of events;',
     '"traits": personality traits their behaviour shows (a list of short phrases);',
@@ -158,9 +171,9 @@ const CHARACTERS_INSTRUCTIONS = [
 ].join(' ');
 
 const THREADS_INSTRUCTIONS = [
-    'The COMPLETE updated list of story threads: plot hooks, unresolved narrative threads, open questions, suspicions and theories, promises, plans and quest seeds - anything set up that could be picked up later or is still open.',
+    'Only the story threads that are new or that the new memories move along or change - every current thread you leave out is kept as it is. Story threads are plot hooks, unresolved narrative threads, open questions, suspicions and theories, promises, plans and quest seeds - anything set up that could be picked up later or is still open.',
     'A suspicion or theory (someone suspects, wonders, believes without proof) is a "mystery" thread, never a fact.',
-    'Keep the current ones, update their status and progress from the new memories, add new ones. Never drop a thread: when one is settled, mark it "resolved" and say how in its progress - a suspicion proven wrong is resolved too ("it turned out the gremlins were not involved").',
+    'Give each current thread the new memories touch with its id, its status and progress updated; add new ones. Never drop a thread: when one is settled, mark it "resolved" and say how in its progress - a suspicion proven wrong is resolved too ("it turned out the gremlins were not involved").',
     'Each item is an object: {"id": the id of the current thread it continues, or t<number> for a new one;',
     '"kind": "plot hook", "unresolved thread", "quest seed", "quest", "mystery", "goal" or another short label;',
     '"title": a short name for it;',
@@ -172,13 +185,13 @@ const THREADS_INSTRUCTIONS = [
     '"steps": for a plan, its steps in order ([] if it is not a plan) - each {"text": what is to be done; "status": "pending", "active" (being done now), "done", "skipped" (no longer needed) or "failed"; "involved": the names involved in that step; "note": a condition, cost or danger attached to it ("" if none)};',
     '"sources": the refs [m...] of the NEW memories it uses ([] if none)}.',
     'A plan is any sequence of steps the characters lay out to get somewhere - first get X, then win over Y, then trade with Z - even when nobody calls it a plan: record it as one thread with its goal and every step in order. Every NEW memory of type "plan" is such a thread: continue the current thread with the SAME goal - about the same place, person or thing - and update its steps, or add a new plan thread; never put it on a thread about something else, and never leave one out.',
-    'Keep a plan\'s current steps in their order and update their status from the new memories; when the characters change the plan, add, reorder or mark steps "skipped" - never remove a step that is done.',
+    'A plan you give lists all its steps: its current steps in their order, their status updated from the new memories; when the characters change the plan, add, reorder or mark steps "skipped" - never remove a step that is done.',
     'A thread "written by the author" is the story the author wants followed: always keep it, with its title and steps as they are - only update its status, its progress and each step\'s status as the new memories move it along.',
 ].join(' ');
 
 const WORLD_INSTRUCTIONS = [
-    'The COMPLETE updated list of what the memories establish about the world - keep the current entries, revised by the new memories, and add new ones. Record every place mentioned, and anything that appears more than once.',
-    'Never drop an entry: when the new memories show it no longer holds, keep it and change its "status".',
+    'Only the world entries that are new or that the new memories change - every current entry you leave out is kept as it is. Record every new place mentioned, and anything that appears more than once.',
+    'Never drop an entry: when the new memories show it no longer holds, give it with its "status" changed.',
     'Each item is an object: {"id": the id of the current entry it continues, or w<number> for a new one;',
     '"kind": "secret" (something true that is hidden from some of the characters - not a suspicion or a theory, which are story threads), "promise" (a promise, oath, vow, pledge or deal someone made - marriage vows, a sworn oath, "I will come back for you"), "location" (any place - a building, a room, a street, a city), "faction" (a group, team, business, organization, gang, staff or crowd), "item" (an object that matters or keeps appearing), "event" (an ongoing world event or condition - weather, shortages, holidays, emergencies, local happenings) or "lore" (how the world works - rules, customs, cultural norms, recurring patterns);',
     '"name": its name, or a short label;',
@@ -248,7 +261,9 @@ const PRESETS = [
         header: COMPILER_HEADER,
         description: 'Archivist: compiles a chat\'s memories into facts, relationships and character insights. Run from the Archivist drawer.',
         variables: [
-            [FACTS_VARIABLE, () => variableDef(FACTS_INSTRUCTIONS, 'Compiled facts', { text: { type: 'string' } })],
+            // No required field: a removal ({"id": "f3", "remove": true}) has
+            // no text, and State Engine drops an item missing a schema field.
+            [FACTS_VARIABLE, () => variableDef(FACTS_INSTRUCTIONS, 'Compiled facts', {})],
             [RELATIONSHIPS_VARIABLE, () => variableDef(RELATIONSHIPS_INSTRUCTIONS, 'Compiled relationships', { from: { type: 'string' }, to: { type: 'string' }, type: { type: 'string' } })],
             [CHARACTERS_VARIABLE, () => variableDef(CHARACTERS_INSTRUCTIONS, 'Compiled character insights', { name: { type: 'string' } })],
             [STORY_SUMMARY_VARIABLE, () => summaryDef(STORY_SUMMARY_INSTRUCTIONS, 'Compiled story summary')],
@@ -337,7 +352,9 @@ async function writeCompiled(chatKey, compiled) {
 // The current (or last) run, for the drawer and the memory browser:
 // { running, chatKey, chatId, rebuild, reason, batch, batches, part:
 //   'memory' | 'world' | null, outcome: null | 'compiled' | 'nothing' |
-//   'failed', error, finishedAt }
+//   'failed', error, finishedAt, cutOff: how many answers were cut off (their
+//   complete items saved), trimmed: whether a prompt was fitted to the
+//   context by a smaller batch or less knowledge shown }
 let status = null;
 const statusListeners = new Set();
 
@@ -481,17 +498,34 @@ async function readAndClear(chatId, presetName, name) {
     return Array.isArray(value) ? value : [];
 }
 
-// Runs one part's preset with `context`; resolves to its variables'
-// answers, by variable name. Throws when the run failed and wrote nothing -
-// the compile stops there, and the user is offered a retry
-// (src/ui/compile-retry.js), never retried on its own.
+// Runs one part's preset with `context`; resolves to { answers: its
+// variables' answers by variable name, cutOff }. An answer State Engine
+// could not read - the connection stopped it at its token limit, mid-item -
+// keeps every complete item (salvage.js), with cutOff true. (One State
+// Engine closed itself, cut right after an item, reads as a shorter answer -
+// harmless, as every answer is a list of changes.) Throws when the run failed
+// and nothing could be saved - the compile stops there, and the user is
+// offered a retry (src/ui/compile-retry.js), never retried on its own.
 async function runPart(presetName, variables, context, chatId) {
     await updateIndependentPresetContext(presetName, context);
-    const { ok, error } = await runIndependent(presetName, chatId);
+    const { ok, error, response } = await runIndependent(presetName, chatId);
     const answers = {};
     for (const name of variables) answers[name] = await readAndClear(chatId, presetName, name);
-    if (!ok && Object.values(answers).every((a) => a.length === 0)) throw new Error(error);
-    return answers;
+    let cutOff = false;
+    if (!ok && response) {
+        const salvaged = salvageAnswer(response, variables);
+        if (salvaged) {
+            for (const [name, value] of Object.entries(salvaged.answers)) {
+                if (answers[name].length === 0 && (typeof value === 'string' || Array.isArray(value))) answers[name] = value;
+            }
+            cutOff = !salvaged.complete;
+        }
+    }
+    if (!ok && Object.values(answers).every((a) => a.length === 0)) {
+        const unfinished = response && salvageJsonObject(response)?.complete !== true;
+        throw new Error(unfinished ? `${error} - the answer was cut off before its first complete item (check the compiler's context size and Max tokens)` : error);
+    }
+    return { answers, cutOff };
 }
 
 // Every name the compiled state knows - characters, places, groups,
@@ -523,38 +557,70 @@ async function compileRun(ref, { rebuild }) {
     if (!getChatEntry(chatKey) || (added.length === 0 && !rebuild)) return 'nothing';
     const withWorld = settings.compileWorld !== false;
 
+    // The model's context, and the room kept in it for the answer
+    // (budget.js): each part's prompt is fitted into the rest.
+    const context = contextTokens(settings.compilerContextTokens, SillyTavern.getContext()?.maxContext);
+    const answer = answerTokens(settings.compilerMaxTokens, context);
     await ensureCompilerPreset();
     for (const preset of PRESETS) {
         await configureIndependentPreset(preset.name, {
             enabled: preset.name === COMPILER_PRESET || withWorld,
             connectionProfileId: settings.compilerConnectionProfileId || '',
-            maxTokens: Number(settings.compilerMaxTokens) || null,
+            maxTokens: answer,
             temperature: Number.isFinite(Number(settings.compilerTemperature)) ? Number(settings.compilerTemperature) : null,
             promptedHeader: preset.header,
         });
     }
+    const budgetFor = (preset) => contextBudgetChars({
+        context, answer, overheadChars: presetOverheadChars(preset.header, preset.variables.map(([, def]) => def().prompted.instructions)),
+    });
 
     const recordsById = new Map(records.map((r) => [r.id, r]));
     const resolver = await entityResolver(ref.chatId);
     const nameCache = new Map();
     const nameOf = (id) => nameCache.get(id) ?? null;
     for (const id of new Set(added.flatMap((r) => [...r.entity_ids, ...(r.witness_ids ?? [])]))) nameCache.set(id, await resolver.nameOf(id));
+    const parts = [{ lists: MEMORY_LISTS, budget: budgetFor(PRESETS[0]), render: (view, batch, partial) => compileContext(view, batch, nameOf, [], partial) }];
+    if (withWorld) parts.push({ lists: WORLD_LISTS, budget: budgetFor(PRESETS[1]), render: (view, batch, partial) => worldContext(view, batch, nameOf, partial) });
 
-    // A rebuild with no memories at all still goes once, to an empty result.
-    const batches = [];
-    for (let i = 0; i < added.length; i += COMPILE_BATCH) batches.push(added.slice(i, i + COMPILE_BATCH));
-    if (batches.length === 0) batches.push([]);
-    setStatus({ batches: batches.length });
-    for (let b = 0; b < batches.length; b++) {
-        setStatus({ batch: b + 1, part: 'memory' });
-        const batch = batches[b];
+    // Batches of up to COMPILE_BATCH, each as large as the context allows;
+    // after an answer that was cut off, the rest go in halves. A rebuild with
+    // no memories at all still goes once, to an empty result.
+    let pending = added;
+    let maxBatch = COMPILE_BATCH;
+    let b = 0;
+    const left = () => Math.ceil(pending.length / maxBatch);
+    setStatus({ batches: Math.max(1, left()) });
+    do {
+        const plan = planBatch(pending, { compiled, parts, nameOf, maxBatch });
+        if (!plan) {
+            throw new Error(`even one memory does not fit the compiler's context (${context} tokens, ${answer} of them kept for the answer) - raise the context size or lower Max tokens in the compiler settings`);
+        }
+        const { batch } = plan;
+        const [memoryFit, worldFit] = plan.parts;
+        pending = pending.slice(batch.length);
+        b++;
+        setStatus({ batch: b, batches: b + left(), part: 'memory' });
+        if (plan.trimmed) {
+            const cut = plan.parts.flatMap((fit) => Object.entries(fit.partial).filter(([, partial]) => partial).map(([list]) => list));
+            console.info(LOG_PREFIX, `compile batch ${b}: ${batch.length} memories${cut.length ? `, only the ${cut.join(', ')} bearing on them shown` : ''} - fitted to a ${context}-token context (~${estimateTokens(memoryFit.context)} tokens of memory-part context, ${answer} kept for the answer)`);
+            setStatus({ trimmed: true });
+        }
         const refs = refsFor(batch);
-        const memory = await runPart(COMPILER_PRESET, [FACTS_VARIABLE, RELATIONSHIPS_VARIABLE, CHARACTERS_VARIABLE, STORY_SUMMARY_VARIABLE, SCENE_SUMMARY_VARIABLE, TENSION_VARIABLE],
-            compileContext(compiled, batch, nameOf), ref.chatId);
-        let world = { [THREADS_VARIABLE]: [], [WORLD_VARIABLE]: [] };
+        const memoryRun = await runPart(COMPILER_PRESET, [FACTS_VARIABLE, RELATIONSHIPS_VARIABLE, CHARACTERS_VARIABLE, STORY_SUMMARY_VARIABLE, SCENE_SUMMARY_VARIABLE, TENSION_VARIABLE],
+            memoryFit.context, ref.chatId);
+        let worldRun = { answers: { [THREADS_VARIABLE]: [], [WORLD_VARIABLE]: [] }, cutOff: false };
         if (withWorld) {
             setStatus({ part: 'world' });
-            world = await runPart(WORLD_COMPILER_PRESET, [THREADS_VARIABLE, WORLD_VARIABLE], worldContext(compiled, batch, nameOf), ref.chatId);
+            worldRun = await runPart(WORLD_COMPILER_PRESET, [THREADS_VARIABLE, WORLD_VARIABLE], worldFit.context, ref.chatId);
+        }
+        const memory = memoryRun.answers;
+        const world = worldRun.answers;
+        for (const [label, run] of [['memory', memoryRun], ['world', worldRun]]) {
+            if (!run.cutOff) continue;
+            console.warn(LOG_PREFIX, `the compiler's ${label} answer for batch ${b} was cut off (the model's token limit) - its complete items were saved, the rest are kept as they were`);
+            setStatus({ cutOff: (status.cutOff ?? 0) + 1 });
+            maxBatch = Math.max(1, Math.min(maxBatch, Math.floor(batch.length / 2)));
         }
 
         const resolve = await resolveNames({
@@ -562,8 +628,8 @@ async function compileRun(ref, { rebuild }) {
             threads: world[THREADS_VARIABLE], world: world[WORLD_VARIABLE],
         }, resolver);
         const options = { previous: compiled, refs, recordsById, resolve };
-        const next = parseCompileOutput(memory[FACTS_VARIABLE], memory[RELATIONSHIPS_VARIABLE], options);
-        if (!next) throw new Error('the model\'s answer dropped every fact - the previous compiled memory is kept');
+        // Only the facts the model was shown can be revised or removed by id.
+        const next = parseCompileOutput(memory[FACTS_VARIABLE], memory[RELATIONSHIPS_VARIABLE], { ...options, shownFactIds: memoryFit.partial.facts ? memoryFit.shown.facts : null });
         const characters = parseCharacters(memory[CHARACTERS_VARIABLE], options);
         compiled = {
             ...next,
@@ -586,8 +652,8 @@ async function compileRun(ref, { rebuild }) {
         if (chatKey === openKey()) openCache = { chatKey, compiled };
         // Announced as it goes, so a long rebuild's tension graph and
         // views fill in batch by batch (the last is announced on finishing).
-        if (b < batches.length - 1) emitCompiled(chatKey, ref.chatId);
-    }
+        if (pending.length > 0) emitCompiled(chatKey, ref.chatId);
+    } while (pending.length > 0);
     // Phrase tics: the latest replies' repeated wording, once the story's
     // own names are known.
     recordFoundTics(chatKey, currentCandidates(compiledNames(compiled)));
@@ -601,7 +667,7 @@ export async function compileOpenChat({ rebuild = false, reason = 'manual' } = {
     if (isCompiling()) return false;
     const ref = getCurrentChatRef();
     if (!ref) return false;
-    status = { running: true, chatKey: chatKeyFor(ref), chatId: ref.chatId, rebuild, reason, batch: 0, batches: 0, part: null, outcome: null, error: null, finishedAt: null };
+    status = { running: true, chatKey: chatKeyFor(ref), chatId: ref.chatId, rebuild, reason, batch: 0, batches: 0, part: null, outcome: null, error: null, finishedAt: null, cutOff: 0, trimmed: false };
     setStatus({});
     let outcome;
     try {

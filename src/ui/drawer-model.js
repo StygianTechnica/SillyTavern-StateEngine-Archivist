@@ -137,7 +137,10 @@ export function compilerLine(status, compiled) {
     if (status?.outcome === 'failed') return { text: `The last compile failed: ${status.error || 'see the browser console'}.`, error: true };
     if (!compiled) return { text: 'Not compiled yet.', error: false };
     const pending = compiled.pending ? ` · ${compiled.pending} new ${compiled.pending === 1 ? 'memory' : 'memories'} since` : ' · up to date';
-    return { text: `Compiled ${time(compiled.at)}${pending}.`, error: false };
+    const cutOff = status?.outcome === 'compiled' && status.cutOff
+        ? ` ${status.cutOff === 1 ? 'One answer was' : `${status.cutOff} answers were`} cut off by the model's token limit - the complete items were saved.`
+        : '';
+    return { text: `Compiled ${time(compiled.at)}${pending}.${cutOff}`, error: false };
 }
 
 // The line under "This chat": the open chat and how many memories it has.

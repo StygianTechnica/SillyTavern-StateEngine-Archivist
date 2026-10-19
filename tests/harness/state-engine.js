@@ -124,7 +124,8 @@ export function createFakeStateEngine() {
         // fakeEngine.respond(context, { chatId, preset }): it returns the
         // list to write into the preset's first prompted variable, an object
         // { qualifiedName: value } for several, or throws (the model call
-        // failed).
+        // failed - or, with the error's `response`, an answer that could not
+        // be read: kept as the status's lastResponse, like State Engine).
         async runIndependentPreset(extensionId, instanceId, chatId, ref) {
             const p = preset(ref.namespace, ref.name);
             log('runIndependentPreset', [chatId, ref, p?.independentConfig?.context]);
@@ -134,7 +135,7 @@ export function createFakeStateEngine() {
             try {
                 answer = await api.respond(p.independentConfig?.context, { chatId, preset: p });
             } catch (err) {
-                record({ lastOutcome: 'skipped-parse-error', lastError: err.message });
+                record({ lastOutcome: 'skipped-parse-error', lastError: err.message, lastResponse: err.response ?? null });
                 return false;
             }
             // A list fills the preset's first variable; an object maps
