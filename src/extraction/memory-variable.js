@@ -25,10 +25,14 @@
 // The LIVE variable shares one answer - and one token limit (State Engine's
 // Max response length) - with every other variable of the per-message
 // update. So it asks for at most LIVE_MAX_MEMORIES memories, lets the model
-// leave out present / tags / tone when they add nothing, and is ANSWER
+// leave out private / tags / tone when they add nothing, and is ANSWER
 // LAST (State Engine prompted.answerLast): asked after the other variables,
 // so an answer cut off at the limit loses memories, not the user's own
 // variables (State Engine keeps every value finished before the cut).
+// "present" is always asked for: left optional, the model gave it for under
+// 1% of memories, and Scenario Builder's perspective (who knows what) reads
+// it. A private inner experience (a dream, vision, thought) is present only
+// for the one who had it.
 
 import { KNOWN_SUBTYPES, MEMORY_TAGS } from '../memory/schema.js';
 
@@ -47,10 +51,11 @@ const ITEM_SHAPE = [
     '"scope": "scene" (matters only for the current scene), "session" (matters for this part of the story) or "long_term" (should be remembered from now on);',
     '"importance": "low", "medium" or "high";',
     '"entities": the names of the characters, places, factions, items, creatures and lore involved, exactly as the story names them;',
-    '"present": the names of the characters present who saw or heard it (for a secret, only those who know it);',
+    '"present": always - the names of the characters present who saw or heard it (for a secret, only those who know it); it decides who knows what later, so never leave it out when anyone else could have seen it;',
+    '"private": true when the memory is the inner experience of one person - a dream, vision, thought, recollection, unspoken feeling, or something they saw or did while alone - and then "present" is ONLY that person, even if others were in the room (all they saw was the outside of it: someone sleeping, someone going quiet);',
     `"tags": any of ${MEMORY_TAGS.map((t) => `"${t}"`).join(', ')} that apply - important (matters for the story going forward), trivial (a passing detail), contextual (background that explains other things), emotional (a feeling or emotional moment);`,
     '"tone": its emotional tone in a word or two, such as tense, warm, playful, somber}.',
-    'Leave out "present", "tags" and "tone" when they add nothing.',
+    'Leave out "private", "tags" and "tone" when they add nothing.',
 ].join(' ');
 
 // What to look for - shared by both modes.

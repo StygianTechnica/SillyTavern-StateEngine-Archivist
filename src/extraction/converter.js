@@ -12,6 +12,11 @@
 //                   never creates objects for them.
 // - present         the characters present (witnesses), resolved the same
 //                   way into witness_ids ("witnesses" is accepted too)
+// - private         true for one person's inner experience (a dream, vision,
+//                   thought, unspoken feeling, something seen alone): kept
+//                   as private: true, and witness_ids cut to that person -
+//                   the first name under present - so nobody else in the
+//                   room counts as knowing it
 // - tags, tone      passed on; createMemoryRecord() keeps the known tags
 // - entity_types    built here: { id: object type } for every resolved id
 // - message_index   (catch-up) which message the memory came from
@@ -59,7 +64,9 @@ export async function convertExtractedItems(items, { sourceFor, resolveEntity, m
             entityIds.push(object.id);
             if (object.type) types[object.id] = object.type;
         }
+        const isPrivate = item.private === true || item.private === 'true';
         const witnessIds = await resolveAll(witnessNames(item));
+        if (isPrivate) witnessIds.splice(1);
 
         converted.push({
             text: item.text,
@@ -72,6 +79,7 @@ export async function convertExtractedItems(items, { sourceFor, resolveEntity, m
             tone: item.tone,
             entity_types: types,
             source_message_id: sourceFor(item),
+            ...(isPrivate ? { private: true } : {}),
         });
     }
     return converted;

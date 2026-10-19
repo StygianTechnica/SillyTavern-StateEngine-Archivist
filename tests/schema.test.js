@@ -32,6 +32,12 @@ describe('createMemoryRecord', () => {
         expect(isMemoryRecord({ ...old, witness_ids: [3] })).toBe(false);
     });
 
+    it('writes private only when true, and rejects a malformed one', () => {
+        expect(createMemoryRecord({ ...base, private: true }).private).toBe(true);
+        expect(createMemoryRecord({ ...base, private: 'yes' })).not.toHaveProperty('private');
+        expect(isMemoryRecord({ ...createMemoryRecord(base), private: 'yes' })).toBe(false);
+    });
+
     it('keeps a given id and created_at', () => {
         const record = createMemoryRecord({ ...base, id: 'mem_given', created_at: '2026-01-01T00:00:00.000Z' });
         expect(record.id).toBe('mem_given');

@@ -22,6 +22,13 @@
 //                                 entity_ids and witness_ids ('character',
 //                                 'location'...) - which kind of object each is
 //
+// Optional - added 2026-10-19, written only when true:
+//
+//   private            boolean    one person's inner experience (a dream,
+//                                 vision, thought, unspoken feeling,
+//                                 something seen alone): witness_ids is
+//                                 only that person, whoever else was there
+//
 // When the chat message was written is not stored again: it is the
 // send_date inside source_message_id (messageDateOf() in
 // src/memory/message-sync-plan.js).
@@ -130,6 +137,7 @@ export function createMemoryRecord(fields) {
         tags: normalizeTags(fields.tags),
         tone: normalizeTone(fields.tone),
         entity_types: normalizeEntityTypes(fields.entity_types),
+        ...(fields.private === true ? { private: true } : {}),
     };
 }
 
@@ -152,5 +160,6 @@ export function isMemoryRecord(record) {
         && (record.witness_ids === undefined || (Array.isArray(record.witness_ids) && record.witness_ids.every((id) => typeof id === 'string')))
         && (record.tags === undefined || (Array.isArray(record.tags) && record.tags.every((tag) => typeof tag === 'string')))
         && (record.tone === undefined || typeof record.tone === 'string')
-        && (record.entity_types === undefined || (!!record.entity_types && typeof record.entity_types === 'object' && !Array.isArray(record.entity_types)));
+        && (record.entity_types === undefined || (!!record.entity_types && typeof record.entity_types === 'object' && !Array.isArray(record.entity_types)))
+        && (record.private === undefined || typeof record.private === 'boolean');
 }

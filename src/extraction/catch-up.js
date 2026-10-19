@@ -54,8 +54,8 @@ export const CATCH_UP_PRESET = 'Archivist History Catch-Up';
 
 // Raised whenever memoryVariableDef('catch-up') or the header changes (see
 // LIVE_VARIABLE_VERSION in live.js for why). 2: present, tags, tone.
-// 3: present/tags/tone optional. 4: plans. 5: promises.
-export const CATCH_UP_VARIABLE_VERSION = 5;
+// 3: present/tags/tone optional. 4: plans. 5: promises. 6: present always; private inner experiences.
+export const CATCH_UP_VARIABLE_VERSION = 6;
 
 // The catch-up run's system header (State Engine's own talks about "a
 // recent conversation excerpt" and "the most recent roleplay message",

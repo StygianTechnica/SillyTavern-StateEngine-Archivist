@@ -32,6 +32,21 @@ describe('convertExtractedItems', () => {
         });
     });
 
+    it('keeps a private inner experience to the one person it belongs to', async () => {
+        const typed = { remus: 'chr_remus', varyn: 'chr_varyn' };
+        const [vision, shared] = await convertExtractedItems([
+            { text: 'Remus dreamed of the burning gate.', present: ['Remus', 'Varyn'], private: true },
+            { text: 'Remus told Varyn about the gate.', present: ['Remus', 'Varyn'] },
+        ], { ...options, resolveEntity: async (name) => typed[name.toLowerCase()] ?? null });
+        expect(vision).toMatchObject({ witness_ids: ['chr_remus'], private: true });
+        expect(shared.witness_ids).toEqual(['chr_remus', 'chr_varyn']);
+        expect(shared).not.toHaveProperty('private');
+    });
+
+    it('asks for private inner experiences in both extraction prompts', () => {
+        for (const mode of ['live', 'catch-up']) expect(memoryVariableDef(mode).prompted.instructions).toMatch(/"private": true .*dream, vision.*ONLY that person/);
+    });
+
     it('leaves out names that match no object, and duplicates', async () => {
         const [fields] = await convertExtractedItems([{ text: 't', entities: ['Mira', 'Stranger', 'mira', ' Mira '] }], options);
         expect(fields.entity_ids).toEqual(['chr_mira']);
@@ -122,7 +137,8 @@ describe('memoryVariableDef', () => {
         const live = memoryVariableDef('live').prompted;
         expect(live.answerLast).toBe(true);
         expect(live.instructions).toContain('at most 4');
-        expect(live.instructions).toContain('Leave out "present", "tags" and "tone" when they add nothing.');
+        expect(live.instructions).toContain('Leave out "private", "tags" and "tone" when they add nothing.');
+        expect(live.instructions).toContain('"present": always');
         expect(memoryVariableDef('catch-up').prompted.answerLast).toBeUndefined();
         expect(memoryVariableDef('catch-up').prompted.instructions).not.toContain('at most');
     });
