@@ -466,7 +466,10 @@ function matchByWords(raws, previousItems, wordsOf, prefix) {
 
 // Story threads: plot hooks, unresolved threads, quest seeds. `resolve`
 // links a thread whose title names an object (a quest) to it.
-export function parseThreads(rawThreads, { previous, refs, resolve }) {
+// Every memory of subtype "plan" ends up on the thread it is about
+// (placePlanMemories()). `characterNames`: more names to read past when
+// matching a plan to a thread (the batch's character insights).
+export function parseThreads(rawThreads, { previous, refs, resolve, recordsById, characterNames = [] }) {
     const previousById = new Map((previous.threads ?? []).map((t) => [t.id, t]));
     const nextId = idAssigner('t', previous.threads ?? []);
     const dismissed = dismissedTest(previous.dismissed);
@@ -495,7 +498,158 @@ export function parseThreads(rawThreads, { previous, refs, resolve }) {
         const authored = previousById.get(id);
         if (authored?.added_by === 'user') threads[threads.length - 1] = keepAuthored(authored, threads.at(-1));
     }
-    return withoutDuplicateThreads(carriedForward(threads, previous.threads, (t) => t.id), new Set(threads.map((t) => t.id)));
+    const merged = withoutDuplicateThreads(carriedForward(threads, previous.threads, (t) => t.id), new Set(threads.map((t) => t.id)));
+    return placePlanMemories(merged, { previous, refs, recordsById, characterNames });
+}
+
+// ---- plan memories the answer left without their thread
+//
+// A small model rarely makes a plan memory a thread of its own: it cites it
+// on a thread it already has, about something else ("Secure an alliance with
+// Niamh" for "they discuss finding a hidden cache of enchanted weapons from an
+// old temple"), and the plan is never seen again - each later memory of the
+// same plan goes the same way. So every plan memory compiled so far is
+// placed by its telling words (not the characters' names, not "agree",
+// "discuss", "aid"...), oldest first:
+//   - on the thread whose title or goal has one of them that no other
+//     thread's has ("cache"), or that shares two of them and most of their
+//     weight - cited there; a plan thread made here takes it as its next step;
+//   - else where the answer cited it, when that thread shares a word with it;
+//   - else, once a later plan memory shares two of its telling words (the
+//     same plan told again), the two make a new plan thread: the first one's
+//     aim as its goal, the later ones as its steps in story order. A lone one
+//     waits for the next.
+// The next compiles show that thread to the model, which moves it along.
+
+// Words that say a plan was made or talked about, or that help was asked
+// for - not what the plan is.
+const PLAN_TALK = /^(they|them|their|he|him|she|we|discuss(es|ed|ing)?|agree(s|d|ing)?|plan(s|ned|ning)?|propos(e|es|ed|ing|al)|suggest(s|ed|ing|ion)?|decid(e|es|ed|ing)|offer(s|ed|ing)?|explain(s|ed|ing)?|intend(s|ed|ing)?|hop(e|es|ed|ing)|want(s|ed|ing)?|need(s|ed|ing)?|consider(s|ed|ing)?|figur(e|es|ed|ing)|try|tries|tried|trying|will|would|could|should|together|then|first|next|after|before|that|this|there|when|where|possib\w*|potential\w*|get|gets|getting|find|finds|finding|found|help|helps|helped|helping|aid|aids|aided|aiding|assist\w*|support\w*|seek(s|ing)?|go|goes|going|make|makes|making)$/;
+// Two steps or memories the same when they share this much of the smaller's words.
+const SAME_STEP_OVERLAP = 0.6;
+
+// Lowercased words of the characters' names - every plan names someone.
+function characterWordsOf(previous, extra) {
+    const names = [...(previous.characters ?? []).map((c) => nameOfEntity(c.entity)), ...extra];
+    return new Set(names.flatMap((n) => titleWords(n)));
+}
+
+// A plan's or thread's telling words, as stems; a thread's core ones are
+// its title's and goal's.
+const tellingWords = (value, skip) => new Set(titleWords(value).filter((w) => !PLAN_TALK.test(w) && !skip.has(w)).map(stem));
+const threadWords = (t, skip) => tellingWords([t.title, t.text, t.goal, ...(t.steps ?? []).map((s) => s.text)].join(' '), skip);
+const coreWords = (t, skip) => tellingWords([t.title, t.goal].join(' '), skip);
+
+// What a plan memory sets out to do, without who talked it over: "They
+// discuss finding a hidden cache." -> "Finding a hidden cache".
+const PLAN_LEAD = /^(?:(?:They|He|She|We|\p{Lu}[\p{L}'’-]*(?:\s+(?:and\s+)?\p{Lu}[\p{L}'’-]*)*)\s+)?(?:(?:discuss(?:es|ed)?|agree[sd]?|decide[sd]?|propose[sd]?|suggest(?:s|ed)?|plan(?:s|ned)?|intend(?:s|ed)?|hope[sd]?|want(?:s|ed)?|explain(?:s|ed)?|consider(?:s|ed)?|need(?:s|ed)?)\s+(?:that\s+|to\s+)?)+/u;
+export function planAim(memoryText) {
+    const whole = text(memoryText).replace(/[.!]+$/, '');
+    const aim = whole.replace(PLAN_LEAD, '').trim() || whole;
+    return aim.charAt(0).toUpperCase() + aim.slice(1);
+}
+
+function shortTitle(aim, max = 80) {
+    if (aim.length <= max) return aim;
+    const cut = aim.slice(0, max);
+    return cut.slice(0, cut.lastIndexOf(' ') > 20 ? cut.lastIndexOf(' ') : max).replace(/[,;:\s]+$/, '');
+}
+
+const overlap = (a, b) => {
+    const smaller = Math.min(a.size, b.size);
+    return smaller === 0 ? 0 : sharedCount(a, b) / smaller;
+};
+
+// `threads` with every plan memory compiled so far (`previous.included` and
+// the batch's `refs`) placed - see above. `characterNames`: more names whose
+// words are not telling.
+export function placePlanMemories(threads, { previous, refs, recordsById, characterNames = [] }) {
+    if (!recordsById?.size) return threads;
+    const batchIds = new Set(refs ? refs.values() : []);
+    const compiledIn = new Set([...(previous.included ?? []), ...batchIds]);
+    const plans = [...recordsById.values()]
+        .map((r, order) => ({ r, order, index: messageIndexOf(r) ?? Infinity }))
+        .filter(({ r }) => r.subtype === 'plan' && compiledIn.has(r.id) && isText(r.text))
+        .sort((a, b) => a.index - b.index || a.order - b.order)
+        .map(({ r }) => r);
+    if (plans.length === 0) return threads;
+
+    const skip = characterWordsOf(previous, characterNames);
+    const dismissed = dismissedTest(previous.dismissed);
+    const people = (previous.characters ?? []).map((c) => c.entity).filter((e) => e?.name);
+    const result = threads.map((t) => ({ ...t }));
+    const pending = [];
+
+    // The threads `words` are plainly about, best first: { t, core (title or
+    // goal words no other thread's title or goal has), at (where the first of
+    // them is in `words` - what a plan is about comes before how: "getting to
+    // the old temple requires navigating Redhaven's alliances"), shared,
+    // weight (each shared word 1 / the number of threads that have it) }.
+    const matches = (words) => {
+        const order = [...words];
+        const all = result.map((t) => threadWords(t, skip));
+        const cores = result.map((t) => coreWords(t, skip));
+        const spread = new Map();
+        const coreSpread = new Map();
+        for (const set of all) for (const w of set) spread.set(w, (spread.get(w) ?? 0) + 1);
+        for (const set of cores) for (const w of set) coreSpread.set(w, (coreSpread.get(w) ?? 0) + 1);
+        return result.map((t, i) => {
+            const shared = order.filter((w) => all[i].has(w));
+            const core = shared.filter((w) => cores[i].has(w) && coreSpread.get(w) === 1);
+            return {
+                t,
+                core: core.length,
+                at: core.length ? order.indexOf(core[0]) : Infinity,
+                shared: shared.length,
+                weight: shared.reduce((sum, w) => sum + 1 / spread.get(w), 0),
+            };
+        }).filter((m) => m.core > 0 || (m.shared >= 2 && m.weight >= 1)).sort((a, b) => b.core - a.core || a.at - b.at || b.weight - a.weight);
+    };
+    // A plan thread takes a plan as a step unless a step (or its goal) says
+    // it already - one cited before this batch was dealt with then.
+    const place = (memory, thread) => {
+        const cited = thread.sources.includes(memory.id);
+        if (!cited) thread.sources = [...thread.sources, memory.id];
+        if ((cited && !batchIds.has(memory.id)) || thread.kind !== 'plan' || thread.added_by === 'user') return;
+        const words = tellingWords(memory.text, skip);
+        const known = [thread.goal, ...(thread.steps ?? []).map((s) => s.text)].some((t) => overlap(words, tellingWords(t, skip)) >= SAME_STEP_OVERLAP);
+        if (!known) thread.steps = [...(thread.steps ?? []), { text: planAim(memory.text), status: 'pending', involved: [], note: '' }];
+    };
+    const involvedIn = (memories) => people.filter((e) => {
+        const [first] = titleWords(e.name);
+        return first && memories.some((m) => titleWords(m.text).includes(first));
+    });
+
+    for (const memory of plans) {
+        const words = tellingWords(memory.text, skip);
+        if (words.size === 0) continue;
+        const [best] = matches(words);
+        if (best) {
+            place(memory, best.t);
+            continue;
+        }
+        if (result.some((t) => t.sources.includes(memory.id) && [...words].some((w) => threadWords(t, skip).has(w)))) continue;
+        const first = pending.find((p) => sharedCount(p.words, words) >= Math.min(2, p.words.size, words.size));
+        if (!first) {
+            pending.push({ memory, words });
+            continue;
+        }
+        const aim = planAim(first.memory.text);
+        const thread = {
+            id: idAssigner('t', result)({}), kind: 'plan', title: shortTitle(aim), text: first.memory.text.trim(), status: 'active', progress: '',
+            entity: null, involved: involvedIn([first.memory, memory]), goal: aim, steps: [], sources: [first.memory.id],
+        };
+        if (dismissed('thread', thread)) continue;
+        result.push(thread);
+        pending.splice(pending.indexOf(first), 1);
+        // The plans waiting since, then this one, in story order.
+        for (const other of [...pending]) {
+            if (matches(other.words)[0]?.t !== thread) continue;
+            place(other.memory, thread);
+            pending.splice(pending.indexOf(other), 1);
+        }
+        place(memory, thread);
+    }
+    return result;
 }
 
 // A thread the user wrote (added_by 'user') is the story they want
@@ -608,14 +762,22 @@ function withoutDuplicateThreads(threads, answeredIds) {
     });
 }
 
+// A step's text with the "[pending] " a small model copies from the
+// context's step lines (worldContext()) taken off: [status, text].
+const STEP_STATUS_LEAD = /^\s*\[([^\]]*)\]\s*/;
+function stepStatusLead(value) {
+    const match = text(value).match(STEP_STATUS_LEAD);
+    return match ? [match[1], text(value).slice(match[0].length)] : ['', text(value)];
+}
+
 // A plan's steps, in the answer's order. A step may come as a plain string.
 export function parseSteps(rawSteps, resolve = (name) => ({ id: null, name, type: null })) {
     return (Array.isArray(rawSteps) ? rawSteps : [])
         .map((raw) => (typeof raw === 'string' ? { text: raw } : raw))
-        .filter((raw) => raw && typeof raw === 'object' && isText(raw.text))
+        .filter((raw) => raw && typeof raw === 'object' && isText(raw.text) && isText(stepStatusLead(raw.text)[1]))
         .map((raw) => ({
-            text: text(raw.text),
-            status: normalizeStepStatus(raw.status),
+            text: stepStatusLead(raw.text)[1],
+            status: normalizeStepStatus(isText(raw.status) ? raw.status : stepStatusLead(raw.text)[0]),
             involved: names(raw.involved ?? raw.entities).map(resolve),
             note: text(raw.note),
         }));

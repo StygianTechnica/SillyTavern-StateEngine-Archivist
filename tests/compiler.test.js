@@ -12,6 +12,7 @@ import { colorTagFor, normalizeClassification, withColorTag, COLOR_TAGS } from '
 import {
     refsFor, compileContext, worldContext, parseCompileOutput, parseCharacters, parseThreads, parseWorld, changesSince, buildCompiledView, EMPTY_COMPILED,
     editCompiledItem, removeCompiledItem, editCompiledSummary, compiledItemKey, dismissKey, parseTension, relationshipType, keepAuthored, addCompiledThread, isPlaceholder,
+    parseSteps, planAim,
 } from '../src/compiler/compile-plan.js';
 import { memoryVariableDef } from '../src/extraction/memory-variable.js';
 import {
@@ -456,6 +457,112 @@ describe('planning and parsing', () => {
     });
 });
 
+describe('plan memories become plan threads', () => {
+    const plan = (id, at, text) => rec(id, { subtype: 'plan', at, text });
+    const person = (id, name) => ({ entity: { id, name, type: 'character' }, traits: [], habits: [], stressors: [], motivations: [], arc: '', emotional_state: '', sources: [] });
+    const thread = (id, title, goal, steps = [], sources = []) => ({
+        id, kind: 'quest seed', title, text: title, status: 'active', progress: '', entity: null, involved: [], goal, sources,
+        steps: steps.map((text) => ({ text, status: 'pending', involved: [], note: '' })),
+    });
+    const alliance = thread('t1', 'Secure an Alliance with Niamh and Trade with Graxx', 'Secure an alliance and trade', ['Meet with Niamh and secure her assistance', 'Trade with Graxx at the old windmill']);
+    const library = thread('t2', 'Secure the Liston Library for Leverage', 'Gather goods from Liston Library');
+    const start = {
+        ...EMPTY_COMPILED,
+        characters: [person('chr_remus', 'Remus Watt'), person('chr_varyn', 'Varyn Vance'), person('chr_niamh', 'Niamh'), person('chr_graxx', 'Graxx')],
+        threads: [alliance, library],
+    };
+    // One compile: `batch` new, the model's answer `raws` (by ref).
+    const compileThreads = (state, batch, raws, all = batch) => {
+        const options = { previous: state, refs: refsFor(batch), recordsById: new Map(all.map((r) => [r.id, r])), resolve };
+        const threads = parseThreads(raws, options);
+        return { ...state, threads, included: [...state.included, ...batch.map((r) => r.id)] };
+    };
+    // What the 8B model did with the God War plans: every one cited on a
+    // thread it already had, about something else.
+    const citedOnAlliance = (batch) => [{ ...alliance, steps: alliance.steps, sources: [...refsFor(batch).keys()] }, library];
+
+    const cache = [
+        plan('p1', 72, 'They discuss finding a hidden cache of enchanted weapons from an old temple.'),
+        plan('p2', 151, 'They discuss finding a hidden cache of enchanted weapons from an old temple.'),
+        plan('p3', 189, 'They agree to rest and plan their approach to the cache when they reach Niamh\'s stronghold.'),
+        plan('p4', 319, 'Varyn explained that getting to the old temple requires navigating Redhaven\'s politics and alliances.'),
+    ];
+
+    it('gathers repeated plan memories the model put on an unrelated thread into one plan thread, its steps in story order', () => {
+        const { threads } = compileThreads(start, cache, citedOnAlliance(cache));
+        expect(threads.map((t) => t.id)).toEqual(['t1', 't2', 't3']);
+        expect(threads[2]).toMatchObject({
+            kind: 'plan', status: 'active', title: 'Finding a hidden cache of enchanted weapons from an old temple',
+            goal: 'Finding a hidden cache of enchanted weapons from an old temple', sources: ['p1', 'p2', 'p3', 'p4'],
+        });
+        expect(threads[2].steps).toEqual([
+            { text: 'Rest and plan their approach to the cache when they reach Niamh\'s stronghold', status: 'pending', involved: [], note: '' },
+            { text: 'Getting to the old temple requires navigating Redhaven\'s politics and alliances', status: 'pending', involved: [], note: '' },
+        ]);
+        // The answer's own threads stay as answered.
+        expect(threads[0]).toMatchObject({ title: alliance.title, steps: alliance.steps });
+    });
+
+    it('builds it across compiles: a lone plan waits, the next one about the same goal makes the thread, later ones move it along', () => {
+        const all = [...cache, plan('p5', 330, 'Remus agreed to share the cache\'s location in exchange for aid from Niamh.')];
+        let state = compileThreads(start, [all[0]], citedOnAlliance([all[0]]), all);
+        expect(state.threads.map((t) => t.id)).toEqual(['t1', 't2']);
+
+        state = compileThreads(state, [all[1]], [], all);
+        const made = state.threads.find((t) => t.kind === 'plan');
+        expect(made).toMatchObject({ id: 't3', goal: 'Finding a hidden cache of enchanted weapons from an old temple', steps: [], sources: ['p1', 'p2'] });
+
+        // The model takes it up: the next answer moves it along...
+        state = compileThreads(state, [all[2]], [{ ...made, status: 'active', progress: 'Heading for the stronghold.', sources: ['m1'] }], all);
+        expect(state.threads.find((t) => t.id === 't3')).toMatchObject({ progress: 'Heading for the stronghold.', sources: ['p1', 'p2', 'p3'] });
+        expect(state.threads.find((t) => t.id === 't3').steps.map((s) => s.text)).toEqual(['Rest and plan their approach to the cache when they reach Niamh\'s stronghold']);
+
+        // ...marks a step done, and an answer that leaves the thread out keeps it, with the next plans added after.
+        const answered = state.threads.find((t) => t.id === 't3');
+        state = compileThreads(state, [all[3]], [{ ...answered, steps: [{ text: answered.steps[0].text, status: 'done' }] }], all);
+        state = compileThreads(state, [all[4]], [alliance], all);
+        const kept = state.threads.find((t) => t.id === 't3');
+        expect(kept.steps.map((s) => [s.text, s.status])).toEqual([
+            ['Rest and plan their approach to the cache when they reach Niamh\'s stronghold', 'done'],
+            ['Getting to the old temple requires navigating Redhaven\'s politics and alliances', 'pending'],
+            ['Share the cache\'s location in exchange for aid from Niamh', 'pending'],
+        ]);
+        expect(kept.sources).toEqual(['p1', 'p2', 'p3', 'p4', 'p5']);
+        expect(state.threads.filter((t) => t.kind === 'plan')).toHaveLength(1);
+    });
+
+    it('leaves a plan where the model put it when that thread is about it, and adds a repeat there', () => {
+        const goods = [
+            plan('g1', 67, 'Remus and Varyn agree to secure goods from a ruined library as leverage for their negotiation with Graxx.'),
+            plan('g2', 129, 'They agree to secure goods from a ruined library as leverage for their negotiation with Graxx.'),
+        ];
+        const { threads } = compileThreads(start, goods, [alliance, { ...library, sources: ['m1'] }]);
+        expect(threads.map((t) => t.id)).toEqual(['t1', 't2']);
+        expect(threads[1].sources).toEqual(['g1', 'g2']);
+        expect(threads[1].steps).toEqual([]);
+    });
+
+    it('does not make a plan thread the user deleted', () => {
+        const deleted = removeCompiledItem(compileThreads(start, cache, citedOnAlliance(cache)), 'thread', 't3');
+        const again = compileThreads({ ...deleted, included: [] }, cache, citedOnAlliance(cache));
+        expect(again.threads.filter((t) => t.kind === 'plan')).toEqual([]);
+    });
+
+    it('takes a step\'s status the model wrote into its text', () => {
+        expect(parseSteps(['[done] Sprint toward Liston\'s walls', { text: '[pending] Rest', status: 'active' }, '[pending]'])).toEqual([
+            { text: 'Sprint toward Liston\'s walls', status: 'done', involved: [], note: '' },
+            { text: 'Rest', status: 'active', involved: [], note: '' },
+        ]);
+    });
+
+    it('words a plan by what it sets out to do', () => {
+        expect(planAim('They discuss finding a hidden cache of enchanted weapons from an old temple.')).toBe('Finding a hidden cache of enchanted weapons from an old temple');
+        expect(planAim('Remus and Varyn agree to secure goods from a ruined library.')).toBe('Secure goods from a ruined library');
+        expect(planAim('He hopes to find the old road northeast before nightfall.')).toBe('Find the old road northeast before nightfall');
+        expect(planAim('Getting to the temple takes three days.')).toBe('Getting to the temple takes three days');
+    });
+});
+
 describe('the compiled view', () => {
     const records = [
         rec('m1', { at: 3, chat_id: 'Chat A', source_message_id: 'Chat A#3@d3', subtype: 'event', text: 'Lucian arrived' }),
@@ -678,6 +785,27 @@ describe('compiling through the independent preset', () => {
         for (const name of [COMPILER_PRESET, WORLD_COMPILER_PRESET]) {
             expect(fake.calls.filter((c) => c.name === 'configureIndependentPreset' && c.args[1] === name).at(-1).args[2]).toMatchObject({ connectionProfileId: 'big', maxTokens: 4000, temperature: 0.3, enabled: true });
         }
+    });
+
+    it('makes repeated plan memories one plan thread even when the model cites them on another thread', async () => {
+        await store([
+            { text: 'They discuss finding a hidden cache of enchanted weapons from an old temple.', source_message_id: 'Chat A#1@d1', subtype: 'plan' },
+            { text: 'They discussed finding a hidden cache of enchanted weapons from an old temple.', source_message_id: 'Chat A#1@d1', subtype: 'plan' },
+        ]);
+        await compileOpenChat();
+        const instructions = fake.presets.get(`ar.${WORLD_COMPILER_PRESET}`).variables.get('ar__compiled_threads').prompted.instructions;
+        expect(instructions).toContain('never put it on a thread about something else');
+
+        await store([{ text: 'Lucian and Mira agree to rest before they approach the cache.', source_message_id: 'Chat A#1@d1', subtype: 'plan' }]);
+        await compileOpenChat();
+        const view = await getCompiledMemory();
+        expect(view.threads.map((t) => t.title)).toEqual(['Promotion', 'Finding a hidden cache of enchanted weapons from an old temple']);
+        expect(view.threads[1]).toMatchObject({ kind: 'plan', status: 'active', message_range: { from: 1, to: 1 } });
+        expect(view.threads[1].steps.map((s) => s.text)).toEqual(['Rest before they approach the cache']);
+        expect(view.threads[1].source_memory_ids).toHaveLength(3);
+        // The next run shows the model the thread, to move along.
+        expect(fake.calls.filter((c) => c.name === 'runIndependentPreset' && c.args[1].name === WORLD_COMPILER_PRESET).at(-1).args[2])
+            .toContain('[t2] plan · active: Finding a hidden cache of enchanted weapons from an old temple');
     });
 
     it('skips the world part when it is switched off', async () => {

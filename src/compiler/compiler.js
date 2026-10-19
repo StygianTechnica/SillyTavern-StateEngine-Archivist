@@ -78,7 +78,9 @@ export const WORLD_VARIABLE = 'compiled_world';
 // 12: plan memories become plan threads.
 // 13: tension judged on a fixed scale at a batch's most tense moment.
 // 14: promises, oaths and vows in the world.
-export const COMPILER_VARIABLE_VERSION = 14;
+// 15: a plan memory goes on the thread with its goal, never on one about
+// something else.
+export const COMPILER_VARIABLE_VERSION = 15;
 
 // Variables an older version had, deleted when the version moves on:
 // [preset, variable].
@@ -169,7 +171,7 @@ const THREADS_INSTRUCTIONS = [
     '"goal": for a plan, the end it works toward ("" if it is not a plan);',
     '"steps": for a plan, its steps in order ([] if it is not a plan) - each {"text": what is to be done; "status": "pending", "active" (being done now), "done", "skipped" (no longer needed) or "failed"; "involved": the names involved in that step; "note": a condition, cost or danger attached to it ("" if none)};',
     '"sources": the refs [m...] of the NEW memories it uses ([] if none)}.',
-    'A plan is any sequence of steps the characters lay out to get somewhere - first get X, then win over Y, then trade with Z - even when nobody calls it a plan: record it as one thread with its goal and every step in order. Every NEW memory of type "plan" is such a thread: continue the current thread it belongs to (update its steps), or add it - never leave one out.',
+    'A plan is any sequence of steps the characters lay out to get somewhere - first get X, then win over Y, then trade with Z - even when nobody calls it a plan: record it as one thread with its goal and every step in order. Every NEW memory of type "plan" is such a thread: continue the current thread with the SAME goal - about the same place, person or thing - and update its steps, or add a new plan thread; never put it on a thread about something else, and never leave one out.',
     'Keep a plan\'s current steps in their order and update their status from the new memories; when the characters change the plan, add, reorder or mark steps "skipped" - never remove a step that is done.',
     'A thread "written by the author" is the story the author wants followed: always keep it, with its title and steps as they are - only update its status, its progress and each step\'s status as the new memories move it along.',
 ].join(' ');
@@ -562,12 +564,13 @@ async function compileRun(ref, { rebuild }) {
         const options = { previous: compiled, refs, recordsById, resolve };
         const next = parseCompileOutput(memory[FACTS_VARIABLE], memory[RELATIONSHIPS_VARIABLE], options);
         if (!next) throw new Error('the model\'s answer dropped every fact - the previous compiled memory is kept');
+        const characters = parseCharacters(memory[CHARACTERS_VARIABLE], options);
         compiled = {
             ...next,
-            characters: parseCharacters(memory[CHARACTERS_VARIABLE], options),
+            characters,
             summary: parseSummary(memory[STORY_SUMMARY_VARIABLE], memory[SCENE_SUMMARY_VARIABLE], compiled.summary, newestMessageIndex(batch)),
             tension: parseTension(memory[TENSION_VARIABLE], compiled.tension, batch),
-            threads: withWorld ? parseThreads(world[THREADS_VARIABLE], options) : compiled.threads,
+            threads: withWorld ? parseThreads(world[THREADS_VARIABLE], { ...options, characterNames: characters.map((c) => c.entity.name) }) : compiled.threads,
             world: withWorld ? parseWorld(world[WORLD_VARIABLE], options) : compiled.world,
             dismissed: compiled.dismissed ?? [],
             included: [...new Set([...compiled.included, ...batch.map((r) => r.id)])],
