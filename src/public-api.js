@@ -1,5 +1,7 @@
 // Archivist's public query API, for other extensions (Scenario Builder,
-// Pretty Panels). Read-only by design: nothing here writes memory.
+// Pretty Panels). Read-only by design - nothing here writes memory - with
+// one exception: forgetChat(), for a caller deleting a whole playthrough on
+// the user's say-so (Scenario Builder asks first).
 //
 // Reach it either way:
 //   - window.StateEngineArchivist, set once Archivist has initialized
@@ -16,12 +18,17 @@
 //   getRelationship(from, to, chat_id?) -> Promise<{ forward, backward } | null>
 //   getPhraseTics(chat_id?)         -> phrase_tics: [{ phrase, count, last_used }]
 //   PHRASE_TICS_CHANGED_EVENT       after they change, payload { chatId, chatKey }
+//   forgetChat(chat_key)            -> Promise<boolean>  deletes everything stored for
+//                                      that chat (memories, compiled memory); false when
+//                                      nothing was. chat_key: "char:<avatar>:<chatId>" or
+//                                      "group:<groupId>:<chatId>"
 //
 // See src/memory/archivist.js for each call's exact behavior,
 // src/memory/schema.js for the record shape and src/compiler/dossier.js for
 // the dossier.
 
-import { getMemoriesForEntity, getMemoriesBySubtype, getAllMemories, MEMORIES_CHANGED_EVENT } from './memory/archivist.js';
+import { LOG_PREFIX } from './constants.js';
+import { getMemoriesForEntity, getMemoriesBySubtype, getAllMemories, MEMORIES_CHANGED_EVENT, deleteChatMemories } from './memory/archivist.js';
 import { getCompiledMemory, COMPILED_CHANGED_EVENT } from './compiler/compiler.js';
 import { getEntityDossier, getRelationship } from './compiler/dossier.js';
 import { resolveChatKey } from './compiler/compiler.js';
@@ -33,6 +40,17 @@ import { getChatPhraseTics, PHRASE_TICS_CHANGED_EVENT } from './compiler/phrase-
 export function getPhraseTics(chatId) {
     const chatKey = resolveChatKey(chatId);
     return chatKey ? getChatPhraseTics(chatKey).map(({ phrase, count, last_used: lastUsed }) => ({ phrase, count, last_used: lastUsed })) : [];
+}
+
+// Deletes everything Archivist stored for a chat (by chat key). Resolves to
+// false when it had nothing, or when the deletion failed (logged).
+export async function forgetChat(chatKey) {
+    try {
+        return await deleteChatMemories(String(chatKey ?? ''));
+    } catch (err) {
+        console.warn(LOG_PREFIX, 'could not forget the chat', chatKey, err);
+        return false;
+    }
 }
 
 export {
@@ -51,6 +69,7 @@ export const archivistApi = Object.freeze({
     getRelationship,
     getPhraseTics,
     PHRASE_TICS_CHANGED_EVENT,
+    forgetChat,
 });
 
 export function exposeArchivistApi() {
