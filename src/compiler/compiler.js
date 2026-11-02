@@ -88,7 +88,10 @@ export const WORLD_VARIABLE = 'compiled_world';
 // something else.
 // 16: answers are changes, not complete lists - facts as new / revised /
 // removed, the other lists as the items that are new or changed.
-export const COMPILER_VARIABLE_VERSION = 16;
+// 17: feelings from one's own thoughts and deeds, not how others treat
+// them; the player character's private feelings weigh most; intensity is
+// not how often two share a scene.
+export const COMPILER_VARIABLE_VERSION = 17;
 
 // Variables an older version had, deleted when the version moves on:
 // [preset, variable].
@@ -152,7 +155,8 @@ const RELATIONSHIPS_INSTRUCTIONS = [
     '"type": what the relationship is, in your own words - friend, enemy, mentor, student, colleague, boss, client, rival, crush, partner, family, acquaintance, stranger, or whatever fits best;',
     '"polarity": how "from" feels toward "to", a whole number from -3 to 3: -3 hostile, -2 antagonistic, -1 wary, 0 neutral, 1 friendly, 2 close, 3 devoted -',
     'judge it afresh every time from everything the memories show so far, the newest most of all, not by keeping the current number: a relationship that has grown (they confide, protect each other, kiss, call each other "love") moves up, one that has soured moves down. It must agree with the type and the text - lovers or partners who are tender with each other are 2 or 3, never 1;',
-    '"intensity": how strong or central the relationship is to "from" - "low", "medium" or "high";',
+    'how someone feels is shown by their own thoughts, words and deeds, never by how others treat them: one who is kind, caring or praising says how THEY feel, not how the other feels back. Irritation, resentment, avoidance or wanting someone gone, again and again, is -1 or lower, however much time they spend together and whatever their roles - a mentor one resents is no friend, and being looked after is not closeness. For the player character, a private memory of what they feel weighs more than a scene that has them go along politely;',
+    '"intensity": how strong or central the relationship is to "from" - "low", "medium" or "high" - never just how often the two share a scene;',
     '"trend": "warming", "cooling", "stable" or "volatile";',
     '"text": one sentence describing it; "sources": the refs [m...] of the NEW memories that show it ([] if none)}.',
 ].join(' ');

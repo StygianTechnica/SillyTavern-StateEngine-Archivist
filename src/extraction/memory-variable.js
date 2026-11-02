@@ -64,9 +64,17 @@ const WHAT_COUNTS = 'Record what happened or came to light: events (what someone
     + 'A PLAN is a course of action the characters lay out or agree on to reach a goal, even when nobody calls it a plan ("first we find the old map in the archive, then we get the ferryman on our side, then we cross before the storm"): record it as ONE memory of subtype "plan", "high" importance, tagged "important", whose text gives the goal and every step in order ("Plan to cross the river: 1. find the old map in the archive; 2. win over the ferryman, who wants payment; 3. cross before the storm breaks"), with each step\'s conditions or dangers. A plan always counts among the memories that matter most. '
     + 'Include small concrete details too, as "low" importance - where someone went, what they bought, how they felt about it. Do not record pure description of the surroundings.';
 
+// The player character's feelings are in the user's own messages - what
+// they think, hold back, resent - and seldom in the replies, which tend to
+// have them smile along. Never asked for, they were never kept: 159
+// memories of Galice "caring for" Cyril, none of him wanting her gone, and
+// Archivist compiled him her fond student (Assassins Inc).
+const PLAYER_FEELINGS = 'The player character - the one the user writes - often keeps their feelings to themselves, and the replies seldom say them: when the user\'s message shows how the player character feels about someone (a thought, a word held back, irritation, liking, wanting them gone), record that feeling as a private memory of subtype "relationship", naming whom it is about ("Cyril is fed up with Galice hovering over him"). What the user writes of their own character\'s feelings outweighs any reply that has them smile along.';
+
 const LIVE_INSTRUCTIONS = [
-    `Memories from the most recent roleplay message only - at most ${LIVE_MAX_MEMORIES}, the ones that matter most.`,
+    `Memories from the most recent roleplay message only - at most ${LIVE_MAX_MEMORIES}, the ones that matter most - and, from the user's message just before it, only the player character's feelings.`,
     WHAT_COUNTS,
+    PLAYER_FEELINGS,
     ITEM_SHAPE,
     'Never repeat anything from earlier messages. Answer [] only when nothing at all happens in the most recent message.',
 ].join(' ');
@@ -74,6 +82,7 @@ const LIVE_INSTRUCTIONS = [
 const CATCH_UP_INSTRUCTIONS = [
     'Memories from the chat messages given.',
     WHAT_COUNTS,
+    PLAYER_FEELINGS,
     ITEM_SHAPE,
     'Also give "message_index": the [#number] of the message the memory comes from.',
     'Never repeat a memory listed under "Already remembered". Answer [] only when nothing at all happens in the messages.',

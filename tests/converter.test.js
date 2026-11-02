@@ -47,6 +47,11 @@ describe('convertExtractedItems', () => {
         for (const mode of ['live', 'catch-up']) expect(memoryVariableDef(mode).prompted.instructions).toMatch(/"private": true .*dream, vision.*ONLY that person/);
     });
 
+    it("asks for the player character's feelings, from the user's own message", () => {
+        for (const mode of ['live', 'catch-up']) expect(memoryVariableDef(mode).prompted.instructions).toContain('when the user\'s message shows how the player character feels about someone');
+        expect(memoryVariableDef('live').prompted.instructions).toContain("from the user's message just before it, only the player character's feelings");
+    });
+
     it('leaves out names that match no object, and duplicates', async () => {
         const [fields] = await convertExtractedItems([{ text: 't', entities: ['Mira', 'Stranger', 'mira', ' Mira '] }], options);
         expect(fields.entity_ids).toEqual(['chr_mira']);

@@ -779,6 +779,12 @@ describe('compiling through the independent preset', () => {
             'ar__compiled_tension',
         ]);
         expect(preset.variables.get('ar__compiled_story_summary')).toMatchObject({ type: 'string', prompted: { newEachTurn: true } });
+        // Feelings from one's own side: being cared for is not closeness,
+        // and a resented mentor is no friend (Assassins Inc).
+        const relationships = preset.variables.get('ar__compiled_relationships').prompted.instructions;
+        expect(relationships).toContain('never by how others treat them');
+        expect(relationships).toContain('is -1 or lower, however much time they spend together');
+        expect(relationships).toContain('never just how often the two share a scene');
         const tension = preset.variables.get('ar__compiled_tension').prompted.instructions;
         // A fixed meaning per level, at the batch's most tense moment.
         expect(tension).toContain('MOST TENSE moment');

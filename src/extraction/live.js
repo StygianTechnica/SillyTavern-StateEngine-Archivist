@@ -59,7 +59,8 @@ const OLD_LIVE_PRESET_NAMES = ['Live'];
 // 7: plans, as one memory with their steps in order.
 // 8: promises, oaths and vows; the promises prompt-context variable.
 // 9: present always asked for; private inner experiences (dreams, visions, thoughts) - present is only that person.
-export const LIVE_VARIABLE_VERSION = 9;
+// 10: the player character's feelings, from the user's message before the reply.
+export const LIVE_VARIABLE_VERSION = 10;
 
 const harvests = new Map(); // chatId -> { running, again, retry: items[] }
 
