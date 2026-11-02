@@ -70,6 +70,30 @@ describe('finding repeated wording', () => {
         expect(findCandidates(replies, { ignored: new Set([phraseKey('his tone turned serious')]) }).map((c) => c.text)).not.toContain('His tone turned serious');
     });
 
+    it('still finds a phrase the user only echoes, mocking it (Assassins Inc)', () => {
+        const told = [
+            { index: 175, text: 'Galice smiled. "We are here every step of the way," she said.' },
+            { index: 195, text: '"White Cerberus is here every step of the way," Doc promised.' },
+        ];
+        const has = (found) => keys(found).some((k) => k.includes(phraseKey('every step of the way')));
+        // Written by the user after the model: still the model's tic.
+        expect(has(findCandidates(told, { userTexts: [{ index: 176, text: 'He hated her corny remark, every step of the way.' }] }))).toBe(true);
+        // Written by the user first: the user's own wording.
+        expect(has(findCandidates(told, { userTexts: [{ index: 170, text: 'I am here every step of the way.' }] }))).toBe(false);
+        // A plain string still counts wherever it is.
+        expect(has(findCandidates(told, { userTexts: ['I am here every step of the way.'] }))).toBe(false);
+    });
+
+    it('gives its places to new wording, not to phrases already known', () => {
+        const many = Array.from({ length: 4 }, (_, i) => ({ index: i + 1, text: `She nodded in agreement. Her brow furrowed slightly. He leaned back in his chair. Day ${i} here every step of the way.` }));
+        const known = new Set([phraseKey('nodded in agreement'), phraseKey('her brow furrowed slightly'), phraseKey('leaned back in his chair')]);
+        const found = keys(findCandidates(many, { known, max: 1 }));
+        expect(found).toHaveLength(1);
+        expect(found[0]).toContain(phraseKey('every step of the way'));
+        // A shifted copy of a known phrase is not new.
+        expect(keys(findCandidates(many, { known })).some((k) => k.includes('nod'))).toBe(false);
+    });
+
     it('keeps one candidate per phrase, needs three replies for three words, and never runs across punctuation', () => {
         const found = keys(findCandidates([
             { index: 1, text: 'Varyn reached out, placing a hand on his shoulder. He raised an eyebrow.' },

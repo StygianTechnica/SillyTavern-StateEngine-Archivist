@@ -25,7 +25,7 @@ import { LOG_PREFIX } from '../constants.js';
 import { getSettings, saveSettings } from '../settings.js';
 import { getCurrentChatRef, chatKeyFor, getChatEntry, updateChatEntry } from '../memory/registry.js';
 import { isStoryReply, lastReplyIndex, sourceMessageId } from '../extraction/messages.js';
-import { TIC_WINDOW, DEFAULT_WATCH, MAX_COUNT, MAX_SHOWN, findCandidates, storyWordsOf, addFound, updateForReply, watchEntry } from './phrase-tics.js';
+import { TIC_WINDOW, DEFAULT_WATCH, MAX_COUNT, MAX_SHOWN, WARN_AT, findCandidates, storyWordsOf, addFound, updateForReply, watchEntry } from './phrase-tics.js';
 
 export const PHRASE_TICS_CHANGED_EVENT = 'archivist_phrase_tics_changed';
 
@@ -127,8 +127,10 @@ export function getChatPhraseTics(chatKey = openKey()) {
 // The open chat's tic candidates at a compile: the wording repeated across
 // its latest TIC_WINDOW AI replies, without the words of `storyNames` (the
 // compiled names of its characters, places, groups, things) and what the
-// user writes too ([] when tracking is off).
-export function currentCandidates(storyNames = []) {
+// user wrote before the model did ([] when tracking is off). What `chatKey`
+// already flags is not found again (each reply checks those already): the
+// compile's places go to new wording.
+export function currentCandidates(storyNames = [], chatKey = null) {
     if (!enabled()) return [];
     const chat = SillyTavern.getContext().chat ?? [];
     const replies = [];
@@ -139,8 +141,10 @@ export function currentCandidates(storyNames = []) {
             from = i;
         }
     }
-    const userTexts = chat.slice(from).filter((m) => m?.is_user && typeof m.mes === 'string').map((m) => m.mes);
-    return findCandidates(replies, { userTexts, storyWords: storyWordsOf(storyNames), ignored: ignoredKeys() });
+    // With their place in the chat: what the user wrote first is theirs.
+    const userTexts = chat.slice(from).map((m, k) => ({ m, index: from + k })).filter(({ m }) => m?.is_user && typeof m.mes === 'string').map(({ m, index }) => ({ index, text: m.mes }));
+    const known = new Set(chatKey && getChatEntry(chatKey) ? stateOf(chatKey).tics.filter((t) => t.count >= WARN_AT).map((t) => t.key) : []);
+    return findCandidates(replies, { userTexts, storyWords: storyWordsOf(storyNames), ignored: ignoredKeys(), known });
 }
 
 // The tics a compile found (currentCandidates()) flagged in the chat, and

@@ -171,11 +171,15 @@ export function storyWordsOf(names) {
 // `replies` ([{ index, text }] - the latest AI replies), most repeated
 // first, then longest: [{ key, text, replies: [index], example }], at most
 // `max`. Left out: a sequence with a name in it, or a word of `storyWords`
-// (storyWordsOf()); one the user also wrote (`userTexts`); one in
-// `ignored` (keys). One phrase is one candidate: a sequence whose every
-// occurrence overlaps one already chosen - the same words shifted, or a
-// part of it - is left out.
-export function findCandidates(replies, { userTexts = [], storyWords = new Set(), ignored = new Set(), max = MAX_FOUND } = {}) {
+// (storyWordsOf()); one the user wrote first (`userTexts`: [{ index, text }]
+// - a user message at or before the first reply with it; a plain string
+// counts wherever it is); one in `ignored` (keys). The user echoing the
+// model is no reason to keep its tic: "every step of the way", mocked in
+// the user's own messages, was never flagged (Assassins Inc). One phrase
+// is one candidate: a sequence whose every occurrence overlaps one already
+// chosen - the same words shifted, or a part of it - is left out. `known`
+// (keys): phrases the chat already tracks or watches - not found again.
+export function findCandidates(replies, { userTexts = [], storyWords = new Set(), ignored = new Set(), known = new Set(), max = MAX_FOUND } = {}) {
     const names = namesIn((replies ?? []).map((r) => r.text));
     const skip = (word) => names.has(word) || storyWords.has(word);
     // key -> { key, text, spans: Map(reply index -> [start, end)), example }
@@ -207,16 +211,33 @@ export function findCandidates(replies, { userTexts = [], storyWords = new Set()
     const length = (c) => c.key.split(' ').length;
     const repeated = [...found.values()]
         .filter((c) => c.spans.size >= (length(c) < 4 ? SHORT_MIN_REPLIES : 2))
-        .filter((c) => ![...ignored].some((key) => sameTic(key, c.key)) && !userTexts.some((text) => usesPhrase(text, c.key)))
+        .filter((c) => ![...ignored].some((key) => sameTic(key, c.key)) && !userTexts.some((u) => userFirst(u, c)))
         .sort((a, b) => b.spans.size - a.spans.size || length(b) - length(a));
     const kept = [];
     const overlaps = (a, b) => a[0] < b[1] && b[0] < a[1];
+    // Phrases already tracked or watched (`known`) still cover their words
+    // - a shifted copy is not new - but take none of the `max` places: the
+    // same well-worn eight came back at every compile, and a new tic
+    // further down never got in.
+    const isKnown = (c) => [...known].some((key) => sameTic(key, c.key));
+    let fresh = 0;
     for (const candidate of repeated) {
         const covered = [...candidate.spans].every(([reply, span]) => kept.some((k) => k.spans.has(reply) && overlaps(k.spans.get(reply), span)));
-        if (!covered) kept.push(candidate);
-        if (kept.length >= max) break;
+        if (covered) continue;
+        const knownOne = isKnown(candidate);
+        kept.push({ ...candidate, knownOne });
+        if (!knownOne && ++fresh >= max) break;
     }
-    return kept.map((c) => ({ key: c.key, text: c.text, replies: [...c.spans.keys()].sort((x, y) => x - y), example: c.example }));
+    return kept.filter((c) => !c.knownOne).map((c) => ({ key: c.key, text: c.text, replies: [...c.spans.keys()].sort((x, y) => x - y), example: c.example }));
+}
+
+// Whether a user message (`u`: { index, text } or a string) has the
+// candidate's wording from before the model used it.
+function userFirst(u, candidate) {
+    const text = typeof u === 'string' ? u : u?.text;
+    if (!usesPhrase(text, candidate.key)) return false;
+    if (typeof u === 'string' || !Number.isInteger(u?.index)) return true;
+    return u.index <= Math.min(...candidate.spans.keys());
 }
 
 const sameTic = (a, b) => a === b || ` ${a} `.includes(` ${b} `) || ` ${b} `.includes(` ${a} `);
@@ -292,4 +313,5 @@ export const DEFAULT_WATCH = Object.freeze([
     'a smile playing on his lips',
     'eyes sparkling with mischief',
     'let out a breath he didn\'t know he was holding',
+    'every step of the way',
 ]);

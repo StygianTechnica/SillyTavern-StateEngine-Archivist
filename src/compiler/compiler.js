@@ -656,7 +656,7 @@ async function compileRun(ref, { rebuild }) {
     } while (pending.length > 0);
     // Phrase tics: the latest replies' repeated wording, once the story's
     // own names are known.
-    recordFoundTics(chatKey, currentCandidates(compiledNames(compiled)));
+    recordFoundTics(chatKey, currentCandidates(compiledNames(compiled), chatKey));
     return 'compiled';
 }
 
