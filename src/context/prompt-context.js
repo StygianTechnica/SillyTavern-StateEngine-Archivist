@@ -14,6 +14,7 @@ import { nameKey } from '../compiler/entity-link.js';
 import { SCENE_WINDOW } from '../compiler/compile-plan.js';
 import { activeTics, MAX_SHOWN } from '../compiler/phrase-tics.js';
 import { currentStep } from '../compiler/compiled-schema.js';
+import { canonFor, canonLine, scrubProfile, strayFaction } from '../compiler/canon.js';
 
 // The blocks, in the order a user would usually want them: [local variable
 // name, label, what it holds].
@@ -138,13 +139,26 @@ export function phraseTicBlock(tics, pinned = []) {
     ]);
 }
 
+// `text` without the sentences that tie a character named in them to a
+// faction the library says they are not of.
+export function scrubText(text, canon = []) {
+    if (!canon.length) return text;
+    const named = (s, c) => [c.name, ...c.aliases].some((n) => n.length >= 3 && new RegExp(String.raw`\b${n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\b`, 'i').test(s));
+    return String(text ?? '').split(/(?<=[.!?])\s+/)
+        .filter((s) => !canon.some((c) => named(s, c) && strayFaction(s, c)))
+        .join(' ');
+}
+
 // { [local variable name]: text } for the open chat.
 //   view      getCompiledMemory() (null: never compiled)
 //   present   [{ id?, name, aliases? }] - the characters in the scene
 //   persona   { id?, name, aliases? } | null - the user's persona
 //   phraseTics  the chat's phrase tics (phrase-tic-tracker.js)
 //   pinnedTics  the phrases the user pinned ([{ phrase, key }])
-export function buildPromptContext(view, { present = [], persona = null, phraseTics = [], pinnedTics = [] } = {}) {
+//   canon     canonFacts() of the library (src/compiler/canon.js): each
+//             present character's role and factions lead their line, and
+//             nothing that ties them to another faction is shown
+export function buildPromptContext(view, { present = [], persona = null, phraseTics = [], pinnedTics = [], canon = [] } = {}) {
     const out = Object.fromEntries(CONTEXT_BLOCKS.map(([name]) => [name, '']));
     out.ctx_phrase_tics = phraseTicBlock(phraseTics, pinnedTics);
     if (!view) return out;
@@ -153,14 +167,19 @@ export function buildPromptContext(view, { present = [], persona = null, phraseT
     const isPersona = matcher(persona ? [persona] : []);
     const others = present.filter((p) => !isPersona(p));
 
-    if (view.story_summary) out.ctx_story_summary = block('Story so far:', [view.story_summary]);
+    if (view.story_summary) out.ctx_story_summary = block('Story so far:', [scrubText(view.story_summary, canon)]);
 
     out.ctx_scene = block('Current scene:', sceneLines(view, present));
 
     const characterLines = (view.character_profiles ?? [])
         .filter((p) => isPresent({ id: p.entity_id, name: p.name }))
-        .map((p) => {
+        .map((raw) => {
+            const fixed = canonFor(canon, { id: raw.entity_id, name: raw.name });
+            const p = scrubProfile(raw, fixed);
             const parts = [];
+            // Who they are, from the library: it holds over the compiled view.
+            const who = fixed ? canonLine(fixed).replace(/^- [^:]*:\s*/, '') : '';
+            if (who) parts.push(`who: ${who}`);
             if (p.summary) parts.push(p.summary);
             if (p.traits?.length) parts.push(`traits: ${p.traits.join(', ')}`);
             if (p.motivations?.length) parts.push(`wants: ${p.motivations.join(', ')}`);
@@ -176,7 +195,10 @@ export function buildPromptContext(view, { present = [], persona = null, phraseT
         .slice(0, MAX_ITEMS * 2)
         .map((r) => {
             const how = [r.type, `${r.polarity_label} (${signed(r.polarity)})`, `${r.intensity} intensity`, r.trend].filter(Boolean).join(', ');
-            return `- ${r.from.name} -> ${r.to.name}: ${how}.${r.text ? ` ${r.text}` : ''}`;
+            // Its words left out when they tie either side to a faction
+            // the library says they are not of.
+            const stray = [r.from, r.to].some((e) => strayFaction(`${r.type ?? ''}. ${r.text ?? ''}`, canonFor(canon, e)));
+            return stray ? `- ${r.from.name} -> ${r.to.name}: ${r.polarity_label} (${signed(r.polarity)}).` : `- ${r.from.name} -> ${r.to.name}: ${how}.${r.text ? ` ${r.text}` : ''}`;
         });
     out.ctx_scene_relationships = block('Relationships in this scene:', relationshipLines);
 

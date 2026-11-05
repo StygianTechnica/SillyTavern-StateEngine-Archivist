@@ -38,6 +38,7 @@ import { findPreset } from '../api/presets.js';
 import { getVariable, createVariable, updateVariable, deleteVariable, getVariableValue, setVariableValue } from '../api/variables.js';
 import { createIndependentPreset, configureIndependentPreset, updateIndependentPresetContext } from '../api/independent-presets.js';
 import { listObjectTypeIds, getObjectByAlias, getObject, listObjects } from '../api/objects.js';
+import { canonFacts, canonFor, canonPromptLines, scrubProfile } from './canon.js';
 import { objectNameIndex, relinkCompiled, aliasSuggestions, baseName, mergeQualifiedNames } from './entity-link.js';
 import { currentCandidates, recordFoundTics } from './phrase-tic-tracker.js';
 import { getAllMemories, linkObjectMentions, MEMORIES_CHANGED_EVENT } from '../memory/archivist.js';
@@ -584,7 +585,22 @@ async function compileRun(ref, { rebuild }) {
     const nameCache = new Map();
     const nameOf = (id) => nameCache.get(id) ?? null;
     for (const id of new Set(added.flatMap((r) => [...r.entity_ids, ...(r.witness_ids ?? [])]))) nameCache.set(id, await resolver.nameOf(id));
-    const parts = [{ lists: MEMORY_LISTS, budget: budgetFor(PRESETS[0]), render: (view, batch, partial) => compileContext(view, batch, nameOf, [], partial) }];
+    // Who the people are and whose side, from the library (canon.js): read
+    // before the new memories, and the current insights shown without what
+    // contradicts it - so one reply's slip is not written down as who
+    // someone is.
+    let canon = [];
+    try {
+        canon = canonFacts(await listObjects(ref.chatId, 'character'), await listObjects(ref.chatId, 'faction'));
+    } catch {
+        canon = [];
+    }
+    const withCanon = (view) => (!canon.length ? view : { ...view, characters: (view.characters ?? []).map((c) => scrubProfile(c, canonFor(canon, c.entity))) });
+    const canonLines = (batch) => canonPromptLines(canon, {
+        ids: batch.flatMap((r) => [...(r.entity_ids ?? []), ...(r.witness_ids ?? [])]),
+        names: batch.flatMap((r) => (r.entities ?? []).map((e) => (typeof e === 'string' ? e : e?.name))),
+    });
+    const parts = [{ lists: MEMORY_LISTS, budget: budgetFor(PRESETS[0]), render: (view, batch, partial) => compileContext(withCanon(view), batch, nameOf, canonLines(batch), partial) }];
     if (withWorld) parts.push({ lists: WORLD_LISTS, budget: budgetFor(PRESETS[1]), render: (view, batch, partial) => worldContext(view, batch, nameOf, partial) });
 
     // Batches of up to COMPILE_BATCH, each as large as the context allows;

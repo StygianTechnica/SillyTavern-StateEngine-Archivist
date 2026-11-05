@@ -22,6 +22,7 @@ import { getChatPhraseTics, getPinnedTics, PHRASE_TICS_CHANGED_EVENT } from '../
 import { nameKey } from '../compiler/entity-link.js';
 import { LIVE_PRESET } from '../extraction/live.js';
 import { CONTEXT_BLOCKS, buildPromptContext } from './prompt-context.js';
+import { canonFacts } from '../compiler/canon.js';
 
 // The Curator capabilities for each block's variable: offered for injection,
 // as a user message (Curator's suggested role).
@@ -55,7 +56,14 @@ async function whoIsHere(chatId, view) {
     const key = nameKey(personaName);
     const persona = !key ? null
         : characters.find((c) => [c.name, ...(c.aliases ?? [])].some((n) => nameKey(n) === key)) ?? { id: null, name: personaName, aliases: [] };
-    return { present, persona };
+    // Who each is and whose side, from the library (src/compiler/canon.js).
+    let factions = [];
+    try {
+        factions = await listObjects(chatId, 'faction');
+    } catch {
+        factions = [];
+    }
+    return { present, persona, canon: canonFacts(characters, factions) };
 }
 
 // Rebuilds the open chat's blocks and writes the changed ones. Never throws.
