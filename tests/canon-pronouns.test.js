@@ -40,3 +40,16 @@ describe('pronouns from the library', () => {
         expect(knight.summary).toBe('Ser Brannoc rode out; he would not yield.');
     });
 });
+
+// Galice's profile: "He asks about the endgame after manipulating Bartin
+// and Tiago against each other" - the sentence names other men, but it
+// opens on her.
+describe('a profile sentence that opens on a pronoun', () => {
+    it('is about its person', () => {
+        const galice = { id: 'chr_g', name: 'Galice Buckar', aliases: ['Galice'], description: 'Her hair. Her eyes. She types.' };
+        const bartin = { id: 'chr_b', name: 'Bartin Medina', aliases: ['Bartin'], gender: 'male' };
+        const all = canonFacts([galice, bartin], []);
+        const p = fixPronouns({ summary: 'Galice is a close ally of Cyril. He asks about the endgame after manipulating Bartin against his brother.' }, canonFor(all, { id: 'chr_g' }), all);
+        expect(p.summary).toBe('Galice is a close ally of Cyril. She asks about the endgame after manipulating Bartin against his brother.');
+    });
+});

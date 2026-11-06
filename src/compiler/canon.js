@@ -134,8 +134,13 @@ export function fixPronouns(profile, c, canon = []) {
         return String(text).split(/(?<=[.!?])\s+/).map((sentence) => {
             const anyone = own.size && [...own].some((n) => new RegExp(String.raw`\b${escape(n)}\b`, 'i').test(sentence));
             const them = others.some((o) => o.gender !== c.gender && named(sentence, o));
+            // A sentence of their own profile that opens on a pronoun is about
+            // them, whoever else it names ("He asks about the endgame after
+            // manipulating Bartin and Tiago", in Galice's).
+            const opens = sentence.match(/^(\s*)(he|she)\b/i);
             if (them) other = true;
             else if (anyone || others.some((o) => named(sentence, o))) other = false;
+            if (them && opens) return `${opens[1]}${swapPronouns(opens[2], c.gender)}${sentence.slice(opens[0].length)}`;
             return other ? sentence : swapPronouns(sentence, c.gender);
         }).join(' ');
     };
