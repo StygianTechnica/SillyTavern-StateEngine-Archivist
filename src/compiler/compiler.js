@@ -38,7 +38,7 @@ import { findPreset } from '../api/presets.js';
 import { getVariable, createVariable, updateVariable, deleteVariable, getVariableValue, setVariableValue } from '../api/variables.js';
 import { createIndependentPreset, configureIndependentPreset, updateIndependentPresetContext } from '../api/independent-presets.js';
 import { listObjectTypeIds, getObjectByAlias, getObject, listObjects } from '../api/objects.js';
-import { canonFacts, canonFor, canonPromptLines, scrubProfile } from './canon.js';
+import { canonFacts, canonFor, canonPromptLines, scrubProfile, fixPronouns } from './canon.js';
 import { objectNameIndex, relinkCompiled, aliasSuggestions, baseName, mergeQualifiedNames } from './entity-link.js';
 import { currentCandidates, recordFoundTics } from './phrase-tic-tracker.js';
 import { getAllMemories, linkObjectMentions, MEMORIES_CHANGED_EVENT } from '../memory/archivist.js';
@@ -595,7 +595,7 @@ async function compileRun(ref, { rebuild }) {
     } catch {
         canon = [];
     }
-    const withCanon = (view) => (!canon.length ? view : { ...view, characters: (view.characters ?? []).map((c) => scrubProfile(c, canonFor(canon, c.entity))) });
+    const withCanon = (view) => (!canon.length ? view : { ...view, characters: (view.characters ?? []).map((c) => scrubProfile(c, canonFor(canon, c.entity), canon)) });
     const canonLines = (batch) => canonPromptLines(canon, {
         ids: batch.flatMap((r) => [...(r.entity_ids ?? []), ...(r.witness_ids ?? [])]),
         names: batch.flatMap((r) => (r.entities ?? []).map((e) => (typeof e === 'string' ? e : e?.name))),
@@ -650,7 +650,8 @@ async function compileRun(ref, { rebuild }) {
         const options = { previous: compiled, refs, recordsById, resolve };
         // Only the facts the model was shown can be revised or removed by id.
         const next = parseCompileOutput(memory[FACTS_VARIABLE], memory[RELATIONSHIPS_VARIABLE], { ...options, shownFactIds: memoryFit.partial.facts ? memoryFit.shown.facts : null });
-        const characters = parseCharacters(memory[CHARACTERS_VARIABLE], options);
+        // Each with their own pronouns (canon.js fixPronouns): kept that way.
+        const characters = parseCharacters(memory[CHARACTERS_VARIABLE], options).map((c) => fixPronouns(c, canonFor(canon, c.entity), canon));
         compiled = {
             ...next,
             characters,

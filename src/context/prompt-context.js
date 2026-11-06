@@ -175,7 +175,7 @@ export function buildPromptContext(view, { present = [], persona = null, phraseT
         .filter((p) => isPresent({ id: p.entity_id, name: p.name }))
         .map((raw) => {
             const fixed = canonFor(canon, { id: raw.entity_id, name: raw.name });
-            const p = scrubProfile(raw, fixed);
+            const p = scrubProfile(raw, fixed, canon);
             const parts = [];
             // Who they are, from the library: it holds over the compiled view.
             const who = fixed ? canonLine(fixed).replace(/^- [^:]*:\s*/, '') : '';
