@@ -144,7 +144,7 @@ const FACTS_INSTRUCTIONS = [
     'A new or revised fact is an object: {"id": "new", or the id of the current fact it revises;',
     '"text": one self-contained statement naming who or what it is about;',
     '"entities": the names of the characters, places, factions and things it is about, exactly as the story names them;',
-    '"classification": "PERMANENT" (stable biography or long-term condition), "SESSION" (true for this part of the story) or "SCENE" (only the immediate scene: arrivals, weather, transport, what is happening right now);',
+    '"classification": "PERMANENT" (stable biography or long-term condition; also that two people slept together, became lovers or confessed love - one fact for the pair, not one per act),"SESSION" (true for this part of the story) or "SCENE" (only the immediate scene: arrivals, weather, transport, what is happening right now);',
     '"theme": one short word - employment, finances, transportation, relationships, activity, health, location, or another;',
     '"sources": the refs [m...] of the NEW memories it uses ([] if none);',
     '"contradicts": the ids of other facts it is incompatible with ([] if none)}.',
@@ -159,7 +159,8 @@ const RELATIONSHIPS_INSTRUCTIONS = [
     'how someone feels is shown by their own thoughts, words and deeds, never by how others treat them: one who is kind, caring or praising says how THEY feel, not how the other feels back. Irritation, resentment, avoidance or wanting someone gone, again and again, is -1 or lower, however much time they spend together and whatever their roles - a mentor one resents is no friend, and being looked after is not closeness. For the player character, a private memory of what they feel weighs more than a scene that has them go along politely;',
     '"intensity": how strong or central the relationship is to "from" - "low", "medium" or "high" - never just how often the two share a scene;',
     '"trend": "warming", "cooling", "stable" or "volatile";',
-    '"text": one sentence describing it; "sources": the refs [m...] of the NEW memories that show it ([] if none)}.',
+    'One passing moment - a sharp or sarcastic remark, a spat, a tense minute on a job - does not remake a relationship the story built over many scenes: it may shift the trend, not the type;',
+    '"text": one sentence describing it, naming both people ("Zane resents Enrique\'s hold on the job", never "detests his rival\'s motives"); "sources": the refs [m...] of the NEW memories that show it ([] if none)}.',
 ].join(' ');
 
 const CHARACTERS_INSTRUCTIONS = [

@@ -334,7 +334,7 @@ function idAssigner(prefix, previousItems) {
 export function parseCompileOutput(rawFacts, rawRelationships, { previous, refs, recordsById, resolve, shownFactIds = null }) {
     return {
         facts: applyFactsDelta(rawFacts, { previous, refs, recordsById, resolve, shownFactIds }),
-        relationships: parseRelationships(rawRelationships, { previous, refs, resolve }),
+        relationships: parseRelationships(rawRelationships, { previous, refs, resolve, recordsById }),
     };
 }
 
@@ -454,7 +454,40 @@ export function keptBond(previous, next) {
     return [...bonds, now].filter((t, i, all) => t && all.findIndex((x) => x.toLowerCase() === t.toLowerCase()) === i).join('; ').slice(0, 120);
 }
 
-export function parseRelationships(rawRelationships, { previous, refs, resolve }) {
+// A tie the story built over many memories does not turn on one moment.
+// Assassins Inc: Inji -> Cyril rested on some 55 memories - friendship, a
+// night together, "a friend and maybe more" - and one sarcastic remark made
+// it "sarcastic tension", wary (-1), its text that remark word for word.
+// An established tie (STEADY_SOURCES or more) that only a few new memories
+// touch moves its polarity one step at most; if the model turned it from
+// warm to cold, its type and text stay and the trend says it is strained.
+const STEADY_SOURCES = 6;
+const FEW_NEW = 2;
+export function steadyTie(previous, next, added) {
+    if (!previous || (previous.sources ?? []).length < STEADY_SOURCES || added > FEW_NEW) return next;
+    if (ENDED.test(String(next.text ?? ''))) return next;
+    const before = normalizePolarity(previous.polarity);
+    const now = normalizePolarity(next.polarity);
+    if (Math.abs(now - before) <= 1) return next;
+    const stepped = before + Math.sign(now - before);
+    const flipped = (before > 0 && now <= 0) || (before < 0 && now >= 0);
+    if (!flipped) return { ...next, polarity: stepped };
+    return { ...next, polarity: stepped, type: previous.type || next.type, text: previous.text || next.text, intensity: previous.intensity ?? next.intensity, trend: now < before ? 'cooling' : 'warming' };
+}
+
+// A tie whose own memories show the two in bed or kissing is a lover's, if
+// its type never said so. Assassins Inc: Cyril -> Inji and Cyril -> Zane
+// read "colleague(s)" over a dozen memories of them making love - the
+// bond guard above could only keep a bond the type had already named.
+const INTIMATE = /\b(?:sex(?:ual(?:ly)?)?|slept together|sleeping together|made love|lovemaking|kiss(?:ed|es|ing)?|mak(?:e|es|ing) out|climax\w*|thrust\w*|in bed|on the bed)\b/i;
+export function sharedBed(rel, recordsById, mirrorSources = []) {
+    const type = String(rel?.type ?? '');
+    if (!recordsById || BOND.test(type) || /\b(?:ex|former)\b/i.test(type)) return type;
+    const shown = [...new Set([...(rel.sources ?? []), ...mirrorSources])].filter((id) => INTIMATE.test(String(recordsById.get(id)?.text ?? ''))).length;
+    return shown >= 2 ? `lover; ${type}`.slice(0, 120) : type;
+}
+
+export function parseRelationships(rawRelationships, { previous, refs, resolve, recordsById = null }) {
     const previousRel = new Map((previous.relationships ?? []).map((r) => [relKey(r), r]));
     const dismissed = dismissedTest(previous.dismissed);
     const relationships = [];
@@ -475,12 +508,20 @@ export function parseRelationships(rawRelationships, { previous, refs, resolve }
         const key = relKey(rel);
         if (seen.has(key)) continue;
         seen.add(key);
-        rel.sources = [...new Set([...(previousRel.get(key)?.sources ?? []), ...sourceIdsOf(raw.sources, refs)])];
+        const before = previousRel.get(key);
+        const oldSources = before?.sources ?? [];
+        rel.sources = [...new Set([...oldSources, ...sourceIdsOf(raw.sources, refs)])];
         if (!rel.text) rel.text = `${rel.from.name} -> ${rel.to.name}: ${rel.type}.`;
-        rel.type = keptBond(previousRel.get(key), rel);
-        relationships.push(rel);
+        rel.type = keptBond(before, rel);
+        const steady = steadyTie(before, rel, rel.sources.length - oldSources.length);
+        relationships.push(steady);
     }
-    return carriedForward(relationships, previous.relationships, relKey);
+    // Lovers both ways: each direction reads the other's memories too.
+    const all = carriedForward(relationships, previous.relationships, relKey);
+    const byKey = new Map(all.map((r) => [relKey(r), r]));
+    const mirror = (r) => byKey.get(`${entityKey(r.to)}|${entityKey(r.from)}`)?.sources ?? [];
+    const fresh = new Set(relationships);
+    return all.map((r) => (fresh.has(r) ? { ...r, type: sharedBed(r, recordsById, mirror(r)) } : r));
 }
 
 // A list's phrases, without what a model writes for an empty one ("none
