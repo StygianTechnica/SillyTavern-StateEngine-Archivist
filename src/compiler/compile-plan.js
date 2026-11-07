@@ -436,6 +436,24 @@ export function relationshipType(value) {
     return raw.split(/\s*[·:(]\s*/)[0].trim() || raw;
 }
 
+// A bond - lovers, a fling, desire, rivals, enemies - outlasts a batch of
+// memories that only show the two at work. Assassins Inc: Inji had slept
+// with Cyril days before, and one compile of mission planning made the
+// whole tie "teammate: Inji works closely with Cyril on the operation";
+// Zane, who had kissed him, became "support". The bond stays in front of
+// the new type ("lover; teammate") until a type of its own replaces it or
+// the text says it ended.
+const BOND = /\b(?:lovers?|romantic|romance|in love|loves?|crush|fling|affair|intimate|sexual|flirt\w*|attract\w*|desire\w*|lust\w*|seduc\w*|spouse|wife|husband|married|betrothed|fianc\w*|girlfriend|boyfriend|sweetheart|ex-lover|former lover|rivals?|rivalry|enem(?:y|ies)|nemesis|hostile|feud\w*|hates?|hatred|loathes?|despises?)\b/i;
+const ENDED = /\b(?:broke up|break up|split up|ended (?:it|things|the affair)|it'?s over|no longer (?:lovers|together|rivals|enemies|involved)|reconciled|made peace|buried the hatchet)\b/i;
+export function keptBond(previous, next) {
+    const before = String(previous?.type ?? '');
+    const now = String(next?.type ?? '');
+    if (!before || BOND.test(now) || ENDED.test(String(next?.text ?? ''))) return now;
+    const bonds = before.split(/\s*;\s*/).filter((t) => BOND.test(t));
+    if (!bonds.length) return now;
+    return [...bonds, now].filter((t, i, all) => t && all.findIndex((x) => x.toLowerCase() === t.toLowerCase()) === i).join('; ').slice(0, 120);
+}
+
 export function parseRelationships(rawRelationships, { previous, refs, resolve }) {
     const previousRel = new Map((previous.relationships ?? []).map((r) => [relKey(r), r]));
     const dismissed = dismissedTest(previous.dismissed);
@@ -459,6 +477,7 @@ export function parseRelationships(rawRelationships, { previous, refs, resolve }
         seen.add(key);
         rel.sources = [...new Set([...(previousRel.get(key)?.sources ?? []), ...sourceIdsOf(raw.sources, refs)])];
         if (!rel.text) rel.text = `${rel.from.name} -> ${rel.to.name}: ${rel.type}.`;
+        rel.type = keptBond(previousRel.get(key), rel);
         relationships.push(rel);
     }
     return carriedForward(relationships, previous.relationships, relKey);
